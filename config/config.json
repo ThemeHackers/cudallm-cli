@@ -1,4 +1,5 @@
 {
-  "llm_url": "http://localhost:8080/completion",
-  "nvcc_path": "nvcc"
+  "llm_url": "http://127.0.0.1:8080/completion",
+  "nvcc_path": "nvcc",
+  "max_stream_chunks": 2000
 }

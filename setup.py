@@ -7,6 +7,11 @@ setup(
     install_requires=[
         'click',
         'requests',
+        'torch',
+        'torchvision',
+        'rich',
+        'psutil',
+        'nvidia-ml-py',
     ],
     entry_points={
         'console_scripts': [
