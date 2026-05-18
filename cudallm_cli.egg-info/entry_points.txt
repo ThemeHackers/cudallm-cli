@@ -1,0 +1,2 @@
+[console_scripts]
+cudallm = src.cli:main
