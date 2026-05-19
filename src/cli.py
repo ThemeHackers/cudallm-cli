@@ -1123,7 +1123,18 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
         
      
         if os.name == 'nt':
-            suffix = "bin-win-cuda-12.4-x64"
+            from .discover import check_environment
+            env_status = check_environment()
+            cuda_ver_str = env_status.get("cuda_version", "12.4")
+            try:
+                cuda_ver = float(cuda_ver_str.split()[0])
+            except (ValueError, IndexError):
+                cuda_ver = 12.4
+
+            if cuda_ver >= 13.0:
+                suffix = "bin-win-cuda-13.1-x64"
+            else:
+                suffix = "bin-win-cuda-12.4-x64"
             ext = ".zip"
             bin_name = "llama-server.exe"
         else:
