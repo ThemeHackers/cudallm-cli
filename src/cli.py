@@ -1223,8 +1223,9 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 @click.option('--file', default='cudaLLM-8B.Q4_K_M.gguf', help='HuggingFace GGUF model file name')
 @click.option('--ngl', default=33, help='Number of layers to offload to GPU')
 @click.option('--ctx', default=4096, help='Context size')
+@click.option('--parallel', default=1, help='Number of parallel request slots (slots)')
 @click.option('--no-update', is_flag=True, help='Disable checking for updates of llama-server')
-def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, ngl, ctx, no_update):
+def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, ngl, ctx, parallel, no_update):
     """
     Launch the local llama-server with CUDA support and auto-dependency resolution.
     """
@@ -1292,6 +1293,7 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
         "-c", str(ctx),
         "--host", host,
         "--port", str(port),
+        "--parallel", str(parallel),
     ]
 
     if reuse_port:
