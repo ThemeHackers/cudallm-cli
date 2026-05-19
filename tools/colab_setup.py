@@ -87,7 +87,7 @@ def main():
     print("[INFO] Launching llama-server with CUDA GPU acceleration in background...")
     subprocess.Popen(server_cmd, shell=True)
 
-    # 4. Wait and verify server connection
+
     print("[INFO] Waiting for server initialization and model download/loading...")
     attempts = 0
     max_attempts = 30
@@ -96,7 +96,7 @@ def main():
         time.sleep(5)
         attempts += 1
         
-        # Check logs
+ 
         if os.path.exists("/content/server_colab.log"):
             with open("/content/server_colab.log", "r") as f:
                 log_content = f.read()
@@ -119,7 +119,7 @@ def main():
 
     print("[SUCCESS] Server is online and listening on http://127.0.0.1:8081")
 
-    # 5. Check nvidia-smi memory usage to confirm GPU allocation
+   
     _, smi_out, _ = run_command("nvidia-smi")
     print("\n" + "="*60)
     print(" Current GPU Status:")
