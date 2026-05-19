@@ -112,7 +112,7 @@ Example: run `nsys` manually against the harness produced by `optimize` (or the 
 
 ```powershell
 # produce a harness executable (optimize will compile a temp exe during its run)
-python -m src.cli optimize path/to/kernel.cu --iters 1 --profile-mode code --nvtx -o optimized.cu
+cudallm optimize path/to/kernel.cu --iters 1 --profile-mode code --nvtx -o optimized.cu
 
 # capture timeline (self-hosted / local machine)
 nsys profile --output nsys_capture --capture-range=cudaProfilerApi --trace=cuda,cudnn ./temp_cuda_kernel.exe
@@ -141,7 +141,7 @@ CI tips
 
 Troubleshooting
 
-- If `ncu` or `nsys` are not found, run `python -m src.cli init` after installing the tools to refresh `config/config.json`.
+- If `ncu` or `nsys` are not found, run `cudallm init` after installing the tools to refresh `config/config.json`.
 - If `nsys` captures empty timelines, ensure the harness uses `cudaProfilerStart()`/`cudaProfilerStop()` (use `--profile-mode code`) or add NVTX ranges.
 
 Configuration
@@ -155,20 +155,4 @@ CI / Regression Checks
 - `ci/ncu_regression_check.sh` runs `ncu` (CSV) and compares with `tools/compare_ncu.py`.
 - Example workflow: `.github/workflows/ncu-regression.yml` (requires a self-hosted GPU runner with NVIDIA tools).
 
-Contributing
-------------
-- Bug reports and PRs welcome. Keep changes focused and add tests where applicable.
-- See `CONTRIBUTING.md` (if present) for contribution guidelines.
-
-License & Credits
------------------
-- License: MIT (add `LICENSE` file to the repo).
-- Core files: `src/cli.py`, `src/sandbox.py`, `src/discover.py`, `src/llm_client.py`.
-
-Contact / Support
------------------
-- For local setup issues, run `python -m src.cli init` and check `config/config.json` to confirm tool paths.
-
----
-
- That's the README. Add `LICENSE` or `CONTRIBUTING.md` if you want standard links to work.
+    
