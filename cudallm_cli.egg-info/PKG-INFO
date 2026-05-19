@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: cudallm-cli
-Version: 0.1.0
-Requires-Dist: click
-Requires-Dist: requests
-Requires-Dist: torch
-Requires-Dist: torchvision
-Requires-Dist: rich
-Dynamic: requires-dist

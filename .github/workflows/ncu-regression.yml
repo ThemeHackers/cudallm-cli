@@ -1,0 +1,70 @@
+name: NCU Regression Check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      exe:
+        description: 'Path to executable to run (relative to repo root)'
+        required: true
+        default: './temp_cuda_kernel.exe'
+      baseline:
+        description: 'Path to baseline CSV in repo (relative)'
+        required: true
+        default: 'ci/baselines/baseline.csv'
+      metrics:
+        description: 'Optional comma-separated ncu metrics'
+        required: false
+        default: ''
+      column:
+        description: 'Optional metric column name or index to compare'
+        required: false
+        default: ''
+
+jobs:
+  ncu-baseline-harness:
+    name: NCU Baseline Harness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run compare_ncu unit tests
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py'
+
+  ncu-regression:
+    name: NCU Regression (self-hosted GPU runner recommended)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, gpu]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt || true; fi
+
+      - name: Ensure script is executable
+        run: chmod +x ci/ncu_regression_check.sh
+
+      - name: Run NCU regression check
+        env:
+          EXE: "${{ github.event.inputs.exe }}"
+          BASELINE: "${{ github.event.inputs.baseline }}"
+          METRICS: "${{ github.event.inputs.metrics }}"
+          COL: "${{ github.event.inputs.column }}"
+        run: |
+          ./ci/ncu_regression_check.sh "$EXE" "$BASELINE" "$METRICS" "$COL"

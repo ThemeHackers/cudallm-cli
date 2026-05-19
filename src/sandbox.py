@@ -3,13 +3,18 @@ import os
 import re
 import shutil
 import time
-from src.discover import find_ncu_path
+from datetime import datetime
+from src.discover import find_ncu_path, find_nsys_path
 
 class CUDASandbox:
-    def __init__(self, file_path, flags=None):
+    def __init__(self, file_path, flags=None, profile_mode='auto', use_nvtx=False, profile_metrics='', apply_nvtx_suggestion=False):
         self.file_path = file_path
         self.exe_path = "./temp_cuda_kernel.exe" if os.name == 'nt' else "./temp_cuda_kernel.out"
         self.flags = flags or []
+        self.profile_mode = profile_mode
+        self.use_nvtx = use_nvtx
+        self.profile_metrics = profile_metrics
+        self.apply_nvtx_suggestion = apply_nvtx_suggestion
         self.reference_checksums = {}
         self.has_custom_harness = False
 
@@ -27,13 +32,19 @@ class CUDASandbox:
 
         define_block = "\n".join(defines)
 
+        profiler_includes = ""
+        if self.use_nvtx:
+            profiler_includes += "#include <nvToolsExt.h>\n"
+        profiler_includes += "#include <cuda_profiler_api.h>\n"
+
         harness_code = f"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <cuda_runtime.h>
 #include <math.h>
 
-{define_block}
+    {profiler_includes}
+    {define_block}
 
 // Helper to check CUDA errors
 #define CUDA_CHECK(val) {{ \
@@ -95,10 +106,26 @@ int main(int argc, char** argv) {{
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
 
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStart());
+        }}
+
+        #ifdef USE_NVTX
+        nvtxRangePushA("DFT_KERNEL");
+        #endif
+
         CUDA_CHECK(cudaEventRecord(start));
         dft_kernel<<<1, 256>>>(d_real, d_imag, d_mag, n);
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
+
+        #ifdef USE_NVTX
+        nvtxRangePop();
+        #endif
+
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStop());
+        }}
 
         float ms = 0;
         CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
@@ -142,10 +169,26 @@ int main(int argc, char** argv) {{
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
 
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStart());
+        }}
+
+        #ifdef USE_NVTX
+        nvtxRangePushA("FFT_KERNEL");
+        #endif
+
         CUDA_CHECK(cudaEventRecord(start));
         fft_shared_kernel<<<1, 512, 2 * 512 * sizeof(float)>>>(d_real, d_imag, n, 8);
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
+
+        #ifdef USE_NVTX
+        nvtxRangePop();
+        #endif
+
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStop());
+        }}
 
         float ms = 0;
         CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
@@ -189,10 +232,26 @@ int main(int argc, char** argv) {{
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
 
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStart());
+        }}
+
+        #ifdef USE_NVTX
+        nvtxRangePushA("VISION_KERNEL");
+        #endif
+
         CUDA_CHECK(cudaEventRecord(start));
         vision_filter_kernel<<<blocks, threads>>>(d_pixels, w, h);
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
+
+        #ifdef USE_NVTX
+        nvtxRangePop();
+        #endif
+
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStop());
+        }}
 
         float ms = 0;
         CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
@@ -237,10 +296,26 @@ int main(int argc, char** argv) {{
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
 
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStart());
+        }}
+
+        #ifdef USE_NVTX
+        nvtxRangePushA("PATTERN_KERNEL");
+        #endif
+
         CUDA_CHECK(cudaEventRecord(start));
         pattern_match_kernel<<<4, 256, pat_len>>>(d_data, data_len, pat_len, d_found);
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
+
+        #ifdef USE_NVTX
+        nvtxRangePop();
+        #endif
+
+        if (enable_profiler) {{
+            CUDA_CHECK(cudaProfilerStop());
+        }}
 
         float ms = 0;
         CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
@@ -282,10 +357,18 @@ int main(int argc, char** argv) {{
             temp_compile_file = "./temp_consolidated_unit.cu"
             
             with open(temp_compile_file, "w") as f:
+            
+                if self.apply_nvtx_suggestion and os.path.exists("nvtx_suggestion.cu"):
+                    try:
+                        with open("nvtx_suggestion.cu", "r", encoding='utf-8') as sf:
+                            f.write(sf.read())
+                            f.write("\n")
+                    except Exception:
+                        pass
                 f.write(code_content)
                 f.write("\n")
                 f.write(harness_code)
-            
+
             target_file = temp_compile_file
 
         from src.discover import find_nvcc_path
@@ -332,48 +415,98 @@ int main(int argc, char** argv) {{
         if not os.path.exists(self.exe_path):
             return {"latency": float('inf'), "raw_output": ""}
 
-        args = []
-        if self.has_custom_harness and self.reference_checksums:
-            for k, v in self.reference_checksums.items():
-                args.append(f"--ref_{k}={v}")
+        try:
+            args = []
+            if self.has_custom_harness and self.reference_checksums:
+                for key, value in self.reference_checksums.items():
+                    args.append(f"--ref_{key}={value}")
 
-        profiler = find_ncu_path()
-        
-        if not profiler:
-            try:
+            if self.profile_mode == 'code':
+                args.append("--profiler=on")
+
+            ncu_bin = find_ncu_path()
+            nsys_bin = find_nsys_path()
+
+            profiler = None
+            if self.profile_mode == 'nsys' and nsys_bin:
+                profiler = ('nsys', nsys_bin)
+            elif self.profile_mode == 'ncu' and ncu_bin:
+                profiler = ('ncu', ncu_bin)
+            elif self.profile_mode == 'auto':
+                if ncu_bin:
+                    profiler = ('ncu', ncu_bin)
+                elif nsys_bin:
+                    profiler = ('nsys', nsys_bin)
+            elif self.profile_mode == 'code' and nsys_bin:
+                profiler = ('nsys', nsys_bin)
+
+            if not profiler:
                 cmd = [self.exe_path] + args
                 start = time.time()
                 result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                
+
                 if result.returncode != 0:
                     err_msg = result.stderr if result.stderr else "Verification mismatch!"
                     return {"latency": 99999.0, "raw_output": f"VERIFICATION FAILURE: {err_msg.strip()}"}
-                
+
                 stdout = result.stdout
                 match = re.search(r"TOTAL_LATENCY:\s*([\d\.]+)\s*ms", stdout)
                 if match:
                     latency = float(match.group(1))
                 else:
                     latency = (time.time() - start) * 1000.0
-                    
-                return {"latency": latency, "raw_output": stdout[:500]}
-            except Exception as e:
-                return {"latency": 99999.0, "raw_output": str(e)}
 
-        cmd = [profiler, self.exe_path] + args
-        try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            output = result.stdout + result.stderr
-            
-            if result.returncode != 0:
-                return {"latency": 99999.0, "raw_output": f"VERIFICATION FAILURE:\n{output[:500]}"}
+                return {"latency": latency, "raw_output": stdout[:500]}
+
+            kind, binpath = profiler
+            if kind == 'ncu':
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                base = f"ncu_report_{ts}"
+                csv_file = f"{base}.csv"
+                cmd = [binpath]
+                if self.profile_metrics:
+                    cmd.extend(['--metrics', self.profile_metrics])
+                cmd.extend(['--csv', '--output', base, self.exe_path])
+                cmd.extend(args)
+                try:
+                    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    output = result.stdout + result.stderr
+                except Exception:
+                    cmd2 = [binpath, self.exe_path] + args
+                    result = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    output = result.stdout + result.stderr
+                if os.path.exists(csv_file):
+                    try:
+                        with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            out_text = f.read()[:500]
+                    except Exception:
+                        out_text = ''
+                    return {"latency": 99999.0, "raw_output": out_text, "ncu_csv": os.path.abspath(csv_file)}
+
+            cmd = [binpath, 'profile', '--output', 'nsys_report', '--trace', 'cuda']
+            if self.profile_mode == 'code':
+                cmd.extend(['--capture-range=cudaProfilerApi'])
+            cmd.append(self.exe_path)
+            cmd.extend(args)
+
+            try:
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
+                output = result.stdout + result.stderr
+            except Exception:
+                try:
+                    cmd2 = [binpath, self.exe_path] + args
+                    result = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
+                    output = result.stdout + result.stderr
+                except Exception as e:
+                    output = f"nsys invocation failed: {e}"
 
             match = re.search(r'([\d\.]+)\s*(ms|us)', output)
             if match:
-                val = float(match.group(1))
-                latency = val / 1000.0 if match.group(2) == "us" else val
+                latency = float(match.group(1))
+                if match.group(2) == 'us':
+                    latency /= 1000.0
                 return {"latency": latency, "raw_output": output[:500]}
-                
+
             return {"latency": 99999.0, "raw_output": output[:500]}
         except Exception as e:
             return {"latency": 99999.0, "raw_output": str(e)}

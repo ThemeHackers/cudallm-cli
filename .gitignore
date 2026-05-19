@@ -1,8 +1,36 @@
-client_err.
-cudallm_cli.egg-info
-.venv
-__pycache__
+# Local environment and caches
+.venv/
+__pycache__/
 *.pyc
-llama-b9209-bin-win-cuda-12.4-x64/
+cudallm_cli.egg-info/
+build/
+dist/
+
+# Configuration
+config/config.json
+
+# Local LLM binaries/servers
+llama-*-bin-*/
+llama-*-bin-*.zip
+
+# OS binaries and libraries
 *.dll
-llama-b9209-bin-win-cuda-12.4-x64/
+*.so
+*.dylib
+*.exe
+*.obj
+*.lib
+*.exp
+*.out
+
+# Diagnostic and temp outputs
+client_err*
+temp_kernel*
+temp_cuda_kernel*
+profile_expert_analysis.txt
+nvtx_suggestion.cu
+nsys_expert*
+ncu_expert*
+nsys_report*
+ncu_report*
+report_*.json

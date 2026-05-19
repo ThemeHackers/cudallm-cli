@@ -1,0 +1,3 @@
+Kernel Name,sm__cycles_elapsed.avg,dram__throughput.avg,sm__sass_thread_inst_executed_avg
+kernel_a,100.0,200.0,300.0
+kernel_b,120.0,210.0,330.0

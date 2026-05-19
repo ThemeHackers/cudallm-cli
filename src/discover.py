@@ -1,7 +1,14 @@
 import subprocess
 import shutil
+import glob
 import re
 import os
+
+def _pick_first_existing(candidates):
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
 
 def find_nvcc_path():
 
@@ -11,16 +18,27 @@ def find_nvcc_path():
         
  
     if os.name == 'nt':
-        base_dir = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
-        if os.path.exists(base_dir):
-            try:
-                for folder in os.listdir(base_dir):
-                    if folder.startswith("v"):
-                           candidate = os.path.join(base_dir, folder, "bin", "nvcc.exe")
-                           if os.path.exists(candidate):
-                               return candidate
-            except Exception:
-                pass
+        cuda_envs = []
+        if os.environ.get("CUDA_PATH"):
+            cuda_envs.append(os.path.join(os.environ["CUDA_PATH"], "bin", "nvcc.exe"))
+        for key, value in os.environ.items():
+            if key.startswith("CUDA_PATH_V") and value:
+                cuda_envs.append(os.path.join(value, "bin", "nvcc.exe"))
+        found_env = _pick_first_existing(cuda_envs)
+        if found_env:
+            return found_env
+
+        roots = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        ]
+        matches = []
+        for root in roots:
+            pattern = os.path.join(root, "NVIDIA GPU Computing Toolkit", "CUDA", "v*", "bin", "nvcc.exe")
+            matches.extend(glob.glob(pattern))
+        if matches:
+            matches.sort(reverse=True)
+            return matches[0]
     return None
 
 def find_nvidia_smi_path():
@@ -33,11 +51,13 @@ def find_nvidia_smi_path():
     if os.name == 'nt':
         candidates = [
             r"C:\Windows\System32\nvidia-smi.exe",
-            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe"),
         ]
-        for candidate in candidates:
-            if os.path.exists(candidate):
-                return candidate
+        found = _pick_first_existing(candidates)
+        if found:
+            return found
     return None
 
 def find_ncu_path():
@@ -46,22 +66,74 @@ def find_ncu_path():
         return sys_path
         
     if os.name == 'nt':
-        base_dir = r"C:\Program Files\NVIDIA Corporation"
-        if os.path.exists(base_dir):
-            try:
-                for folder in os.listdir(base_dir):
-                    if folder.startswith("Nsight Compute"):
-                        candidate = os.path.join(base_dir, folder, "target", "windows-desktop-win7-x64", "ncu.exe")
-                        if os.path.exists(candidate):
-                            return candidate
-            except Exception:
-                pass
+        roots = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "NVIDIA Corporation"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "NVIDIA Corporation"),
+        ]
+        for root in roots:
+            if not os.path.exists(root):
+                continue
+            candidates = []
+            candidates.extend(glob.glob(os.path.join(root, "Nsight Compute*", "target", "**", "ncu.exe"), recursive=True))
+            candidates.extend(glob.glob(os.path.join(root, "**", "ncu.exe"), recursive=True))
+            if candidates:
+                return candidates[0]
     return None
+
+def find_nsys_path():
+    sys_path = shutil.which('nsys')
+    if sys_path:
+        return sys_path
+
+    if os.name == 'nt':
+        roots = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "NVIDIA Corporation"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "NVIDIA Corporation"),
+        ]
+        for root in roots:
+            if not os.path.exists(root):
+                continue
+            candidates = []
+            candidates.extend(glob.glob(os.path.join(root, "Nsight Systems*", "target*", "**", "nsys.exe"), recursive=True))
+            candidates.extend(glob.glob(os.path.join(root, "**", "nsys.exe"), recursive=True))
+            if candidates:
+                return candidates[0]
+    return None
+
+def find_llm_server_path(project_dir=None):
+    for tool_name in ('llm-server', 'llama-server'):
+        sys_path = shutil.which(tool_name)
+        if sys_path:
+            return sys_path
+
+    if project_dir and os.path.exists(project_dir):
+        patterns = [
+            os.path.join(project_dir, "llm-b*", "llm-server.exe"),
+            os.path.join(project_dir, "llama-b*", "llama-server.exe"),
+            os.path.join(project_dir, "**", "llm-server.exe"),
+            os.path.join(project_dir, "**", "llama-server.exe"),
+        ]
+        for pattern in patterns:
+            for candidate in glob.glob(pattern, recursive=True):
+                if os.path.exists(candidate):
+                    return candidate
+
+    return None
+
+def discover_tool_paths(project_dir=None):
+    return {
+        'nvcc_path': find_nvcc_path(),
+        'nvidia_smi_path': find_nvidia_smi_path(),
+        'ncu_path': find_ncu_path(),
+        'nsys_path': find_nsys_path(),
+        'llm_server_path': find_llm_server_path(project_dir),
+    }
 
 def check_environment():
     nvcc_path = find_nvcc_path()
     nvidia_smi_path = find_nvidia_smi_path()
     ncu_path = find_ncu_path()
+    nsys_path = find_nsys_path()
     
     env_info = {
         'nvcc_found': nvcc_path is not None,
@@ -70,6 +142,8 @@ def check_environment():
         'nvidia_smi_path': nvidia_smi_path,
         'ncu_found': ncu_path is not None,
         'ncu_path': ncu_path,
+        'nsys_found': nsys_path is not None,
+        'nsys_path': nsys_path,
         'gpu_model': 'Unknown',
         'compute_capability': 'Unknown',
         'vram_total': 'Unknown',
@@ -78,7 +152,7 @@ def check_environment():
     
     if env_info['nvcc_found']:
         try:
-            res = subprocess.run([env_info['nvcc_path'], '--version'], stdout=subprocess.PIPE, text=True)
+            res = subprocess.run([env_info['nvcc_path'], '--version'], stdout=subprocess.PIPE, text=True, timeout=10)
             match = re.search(r'release (\d+\.\d+)', res.stdout)
             if match:
                 env_info['cuda_version'] = match.group(1)
@@ -89,7 +163,7 @@ def check_environment():
         try:
             res = subprocess.run(
                 [env_info['nvidia_smi_path'], '--query-gpu=name,compute_cap,memory.total', '--format=csv,noheader'],
-                stdout=subprocess.PIPE, text=True
+                stdout=subprocess.PIPE, text=True, timeout=10
             )
             if res.returncode == 0:
                 parts = res.stdout.strip().split(', ')

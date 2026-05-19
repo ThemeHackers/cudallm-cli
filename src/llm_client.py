@@ -7,16 +7,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markup import escape
 
+from .network_security import build_auth_headers, validate_llm_endpoint
+
 console = Console()
 
 def colorize_cuda_line(line):
-    # Base color is light gray/white: \033[37m
-    # CUDA Specifiers: Yellow/Gold \033[93m
-    # C++ Keywords: Magenta \033[35m
-    # Types: Cyan \033[36m
-    # Function names: Orange/Gold \033[1;33m
-    # Comments: Dim gray \033[90m
-    # Numbers: Light orange \033[38;5;208m
     
     if line.strip().startswith("//") or line.strip().startswith("/*"):
         return f"\033[90m{line}\033[0m"
@@ -27,7 +22,6 @@ def colorize_cuda_line(line):
         comment_part = f"\033[90m//{comment_part}\033[0m"
         
     if line.strip().startswith("#"):
-      
         line = re.sub(r"(#\w+)\s+(<[^>]+>|\"[^\"]+\")", r"\033[34m\1\033[37m \033[32m\2\033[37m", line)
         line = re.sub(r"(#\w+)", r"\033[34m\1\033[37m", line)
         return f"\033[37m{line}\033[0m" + comment_part
@@ -68,13 +62,37 @@ def colorize_cuda_line(line):
     return f"\033[37m{line}\033[0m" + comment_part
 
 class LLMClient:
-    def __init__(self, url, max_stream_chunks=2000):
+    def __init__(
+        self,
+        url,
+        max_stream_chunks=2000,
+        api_key=None,
+        api_key_file=None,
+        verify_tls=True,
+        allow_insecure_remote=False,
+    ):
         self.url = url
         self.total_tokens = 0
         self.max_stream_chunks = max_stream_chunks
+        self.request_headers = build_auth_headers(api_key=api_key, api_key_file=api_key_file)
+        self.verify_tls = verify_tls
+        self.endpoint_info = validate_llm_endpoint(url, allow_insecure_remote=allow_insecure_remote)
+        self._validate_url()
         
     def _is_ollama(self):
         return "ollama" in self.url.lower() or "11434" in self.url
+
+    def _validate_url(self):
+        try:
+            parsed = re.match(r'^(https?)://([^/:]+)(:\d+)?(/.*)?$', self.url)
+            if not parsed:
+                console.print(f"[yellow]Warning: LLM URL does not look like HTTP(S): {self.url}[/yellow]")
+            elif self.endpoint_info.get("is_private"):
+                console.print(f"[green]LLM endpoint classified as private network: {self.endpoint_info.get('host')}[/green]")
+            elif self.endpoint_info.get("is_secure"):
+                console.print(f"[green]LLM endpoint uses HTTPS: {self.url}[/green]")
+        except Exception:
+            console.print(f"[yellow]Warning: unable to validate LLM URL: {self.url}[/yellow]")
 
     def _looks_like_cuda_code(self, text):
         snippet = text.strip()
@@ -82,7 +100,7 @@ class LLMClient:
             return False
 
         markers = [
-            "__global__", "__device__", "__host__", "#include",
+            "__global__", "__device__", "__host__", "   include",
             "cudaMalloc", "cudaMemcpy", "dim3", "<<<", ">>>"
         ]
         if any(marker in snippet for marker in markers):
@@ -92,7 +110,7 @@ class LLMClient:
         
     def generate_code(self, prompt, max_tokens=4096, status_callback=None, early_terminate=True):
         start_time = time.time()
-        
+
         payload = {
             "prompt": prompt,
             "n_predict": max_tokens,
@@ -112,44 +130,68 @@ class LLMClient:
                 },
                 "stream": True
             }
-            
+
+
+        attempt = 0
+        max_attempts = 3
+        backoff = 1.0
+        resp = None
+        while attempt < max_attempts:
+            try:
+                resp = requests.post(
+                    self.url,
+                    json=payload,
+                    headers=self.request_headers,
+                    stream=True,
+                    timeout=30,
+                    verify=self.verify_tls,
+                )
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                attempt += 1
+                if attempt >= max_attempts:
+                    console.print(f"[bold red]LLM request failed after {attempt} attempts: {e}[/bold red]")
+                    return None, 0
+                time.sleep(backoff)
+                backoff *= 2
+
+        if resp is None:
+            console.print("[bold red]Failed to get response from LLM.[/bold red]")
+            return None, 0
+
+
+        result_text = ""
+        tokens_generated = 0
+        if status_callback:
+            status_callback("AI Thinking & Code Generation started...")
+        else:
+            console.print("[bold yellow]AI Thinking & Code Generation started...[/bold yellow]")
+
+        in_think = False
+        has_printed_think_header = False
+        has_printed_think_footer = False
+        in_code_block = False
+        has_passed_opening_line = False
+        has_printed_code_header = False
+        stream_buffer = ""
+
+        last_line = None
+        repeat_count = 0
+        MAX_REPEATS = 5
+        last_chunk_text = None
+        chunk_repeat_count = 0
+        MAX_CHUNK_REPEATS = 8
+
         try:
-            response = requests.post(self.url, json=payload, stream=True, timeout=120)
-            response.raise_for_status()
-            
-            result_text = ""
-            tokens_generated = 0
-            
-            if status_callback:
-                status_callback("AI Thinking & Code Generation started...")
-            else:
-                console.print("[bold yellow]AI Thinking & Code Generation started...[/bold yellow]")
-            
-            in_think = False
-            has_printed_think_header = False
-            has_printed_think_footer = False
-            in_code_block = False
-            has_passed_opening_line = False
-            has_printed_code_header = False
-            stream_buffer = ""
-           
-            last_line = None
-            repeat_count = 0
-            MAX_REPEATS = 5
-            last_chunk_text = None
-            chunk_repeat_count = 0
-            MAX_CHUNK_REPEATS = 8
-            
-            for chunk in response.iter_lines():
+            for chunk in resp.iter_lines():
                 if not chunk:
                     continue
-                
                 chunk_str = chunk.decode('utf-8').strip()
                 if chunk_str.startswith('data:'):
                     chunk_str = chunk_str[5:].strip()
                 if not chunk_str or chunk_str == '[DONE]':
                     continue
-                    
                 try:
                     res_json = json.loads(chunk_str)
                     if self._is_ollama():
@@ -171,18 +213,17 @@ class LLMClient:
                         else:
                             last_chunk_text = normalized_chunk
                             chunk_repeat_count = 1
-
                         if chunk_repeat_count >= MAX_CHUNK_REPEATS:
                             console.print(f"\n[bold yellow][WARNING] Repetition loop detected at chunk level ({chunk_repeat_count}x). Force-stopping generation.[/bold yellow]")
                             done = True
-                        
+
                     result_text += content
                     tokens_generated += 1
 
                     if tokens_generated > self.max_stream_chunks:
                         console.print(f"\n[bold yellow][WARNING] Token limit reached ({self.max_stream_chunks}). Force-stopping generation.[/bold yellow]")
                         done = True
-                                     
+
                     if tokens_generated % 5 == 0 and tokens_generated > 50:
                         recent_lines = [l.strip() for l in result_text.split('\n')[-12:] if l.strip()]
                         if len(recent_lines) >= 6:
@@ -192,7 +233,7 @@ class LLMClient:
                             if most_common_count >= 4:
                                 console.print(f"\n[bold yellow][WARNING] Degenerate repetition detected: '{most_common_line[:60]}' repeated {most_common_count}x. Force-stopping.[/bold yellow]")
                                 done = True
-                    
+
                     if status_callback:
                         if "<think>" in result_text and "</think>" not in result_text:
                             current_think = result_text.split("<think>")[1].strip()
@@ -206,7 +247,6 @@ class LLMClient:
                         else:
                             status_callback(f"AI Reasoning: [dim cyan]Analyzing kernel constraints... ({tokens_generated} tokens)[/dim cyan]")
                     else:
-                       
                         if "<think>" in result_text and "</think>" not in result_text:
                             in_think = True
                             if not has_printed_think_header:
@@ -217,18 +257,16 @@ class LLMClient:
                             if not has_printed_think_footer:
                                 console.print("\n" + "=" * 114 + "\n", style="bold cyan")
                                 has_printed_think_footer = True
-                                
-                     
+
                         text_no_think = result_text
                         if "</think>" in text_no_think:
                             text_no_think = text_no_think.split("</think>")[-1]
                         elif "<think>" in text_no_think:
                             text_no_think = text_no_think.split("<think>")[0]
-                            
+
                         num_backticks = text_no_think.count("```")
-                        
+
                         if num_backticks % 2 == 1:
-                          
                             if not in_code_block:
                                 in_code_block = True
                                 if not has_printed_think_footer:
@@ -240,13 +278,11 @@ class LLMClient:
                                 has_passed_opening_line = False
                                 stream_buffer = ""
                         else:
-                          
                             if in_code_block:
                                 in_code_block = False
                                 if early_terminate:
                                     done = True
 
-                      
                         if in_think:
                             clean_content = content
                             for tag in ["<think>", "</think>"]:
@@ -267,34 +303,33 @@ class LLMClient:
                                 if "```" in clean_code_chunk:
                                     clean_code_chunk = clean_code_chunk.split("```")[0]
                                 stream_buffer += clean_code_chunk
-                                
-                            if has_passed_opening_line and stream_buffer:
-                                if "\n" in stream_buffer:
-                                    lines = stream_buffer.split("\n")
-                                    for line in lines[:-1]:
-                                        stripped = line.strip()
-                                        if stripped == last_line and stripped:
-                                            repeat_count += 1
-                                            if repeat_count >= MAX_REPEATS:
-                                                console.print(f"\n[bold yellow][WARNING] Repetition loop detected ({repeat_count}x). Force-stopping generation.[/bold yellow]")
-                                                done = True
-                                                break
-                                            continue 
-                                        else:
-                                            last_line = stripped
-                                            repeat_count = 0
-                                        sys.stdout.write(colorize_cuda_line(line) + "\n")
-                                        sys.stdout.flush()
-                                    stream_buffer = lines[-1]
+
+                                if has_passed_opening_line and stream_buffer:
+                                    if "\n" in stream_buffer:
+                                        lines = stream_buffer.split("\n")
+                                        for line in lines[:-1]:
+                                            stripped = line.strip()
+                                            if stripped == last_line and stripped:
+                                                repeat_count += 1
+                                                if repeat_count >= MAX_REPEATS:
+                                                    console.print(f"\n[bold yellow][WARNING] Repetition loop detected ({repeat_count}x). Force-stopping generation.[/bold yellow]")
+                                                    done = True
+                                                    break
+                                                continue
+                                            else:
+                                                last_line = stripped
+                                                repeat_count = 0
+                                            sys.stdout.write(colorize_cuda_line(line) + "\n")
+                                            sys.stdout.flush()
+                                        stream_buffer = lines[-1]
                         else:
-                        
                             clean_content = content
                             if "```" in clean_content:
                                 clean_content = clean_content.replace("```", "")
                             if clean_content:
                                 sys.stdout.write(f"\033[37m{clean_content}\033[0m")
                                 sys.stdout.flush()
-                        
+
                     if done:
                         break
                 except Exception as e:
@@ -305,7 +340,7 @@ class LLMClient:
             if stream_buffer:
                 sys.stdout.write(colorize_cuda_line(stream_buffer) + "\n")
                 sys.stdout.flush()
-                
+
             if not status_callback:
                 if not has_printed_think_header and result_text:
                     if "```" in result_text:
@@ -317,9 +352,9 @@ class LLMClient:
                         console.print("\n" + "=" * 114 + "\n", style="bold cyan")
                 elif in_think and not has_printed_think_footer:
                     console.print("\n" + "=" * 114 + "\n", style="bold cyan")
-                    
+
                 console.print(f"\n[bold green]Generation complete! Total tokens: {tokens_generated} (In {time.time() - start_time:.2f}s)[/bold green]")
-             
+
             think_match = re.search(r"<think>(.*?)</think>", result_text, re.DOTALL)
             if think_match:
                 result_text = result_text.replace(think_match.group(0), "").strip()
@@ -327,9 +362,7 @@ class LLMClient:
                 if "<think>" in result_text:
                     parts = result_text.split("<think>")
                     result_text = parts[0].strip()
-            
-            code_match = re.search(r"```(?:cuda|cpp|c)?\n(.*?)```", result_text, re.DOTALL)
-            if code_match:
+
                 return code_match.group(1).strip(), time.time() - start_time
 
             code_match_open = re.search(r"```(?:cuda|cpp|c)?\n(.*)", result_text, re.DOTALL)
@@ -430,3 +463,47 @@ class LLMClient:
             f"{user_prompt}<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
+
+    def analyze_profile(self, summary_text, max_tokens=2000):
+        """Send profile summary text to LLM and request a structured expert analysis and action plan."""
+        system_prompt = (
+            "You are a senior GPU performance engineer. Analyze the following profiling summary (NSYS timeline excerpt and NCU CSV preview).\n"
+            "Provide: 1) Short diagnostic summary (one paragraph), 2) Roofline-based verdict (memory-bound or compute-bound), 3) Concrete optimization recommendations (code-level hints, NVTX marker suggestions), and 4) Suggested NCU metrics and commands for deeper analysis.\n"
+            "Respond in clear sections with headings: DIAGNOSIS, ROOFLINE_VERDICT, RECOMMENDATIONS, DEEP_NCU_COMMANDS, NVTX_SUGGESTIONS. Keep it concise and technical."
+        )
+        user_prompt = f"Profiling summary:\n\n{summary_text}\n\nPlease analyze and provide the sections requested."
+
+        payload = {
+            "prompt": system_prompt + "\n" + user_prompt,
+            "n_predict": max_tokens,
+            "temperature": 0.0,
+            "stream": False
+        }
+        attempt = 0
+        max_attempts = 3
+        backoff = 1.0
+        while attempt < max_attempts:
+            try:
+                r = requests.post(
+                    self.url,
+                    json=payload,
+                    headers=self.request_headers,
+                    timeout=60,
+                    verify=self.verify_tls,
+                )
+                r.raise_for_status()
+
+                try:
+                    j = r.json()
+                    if isinstance(j, dict) and 'response' in j:
+                        return j['response']
+                except Exception:
+                    pass
+                return r.text
+            except Exception as e:
+                attempt += 1
+                if attempt >= max_attempts:
+                    console.print(f"[bold red]LLM analysis failed after {attempt} attempts: {e}[/bold red]")
+                    return None
+                time.sleep(backoff)
+                backoff *= 2

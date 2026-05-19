@@ -1,5 +1,0 @@
-click
-requests
-torch
-torchvision
-rich
