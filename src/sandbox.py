@@ -9,6 +9,7 @@ from src.discover import find_ncu_path, find_nsys_path
 class CUDASandbox:
     def __init__(self, file_path, flags=None, profile_mode='auto', use_nvtx=False, profile_metrics='', apply_nvtx_suggestion=False):
         self.file_path = file_path
+        self.original_file_path = file_path
         self.exe_path = "./temp_cuda_kernel.exe" if os.name == 'nt' else "./temp_cuda_kernel.out"
         self.flags = flags or []
         self.profile_mode = profile_mode
@@ -373,10 +374,49 @@ int main(int argc, char** argv) {{
 
         from src.discover import find_nvcc_path
         nvcc_bin = find_nvcc_path() or "nvcc"
-        cmd = [nvcc_bin, target_file, "-o", self.exe_path] + self.flags
+        src_dir = os.path.dirname(os.path.abspath(self.original_file_path or self.file_path))
+        
+      
+        include_dirs = [src_dir]
+        curr = src_dir
+        for _ in range(4):
+            if not curr or curr == os.path.dirname(curr):
+                break
+            for name in ["include", "includes", "headers", "src", "kernels"]:
+                candidate = os.path.join(curr, name)
+                if os.path.isdir(candidate):
+                    include_dirs.append(candidate)
+            try:
+                for entry in os.scandir(curr):
+                    if entry.is_dir() and entry.name not in [".git", ".venv", "__pycache__", "build", "dist"]:
+                        has_headers = False
+                        try:
+                            for sub_entry in os.scandir(entry.path):
+                                if sub_entry.is_file() and sub_entry.name.lower().endswith(('.h', '.cuh')):
+                                    has_headers = True
+                                    break
+                        except Exception:
+                            pass
+                        if has_headers or entry.name.lower() in ["include", "includes", "headers"]:
+                            include_dirs.append(entry.path)
+            except Exception:
+                pass
+            curr = os.path.dirname(curr)
+
+
+        cmd = [nvcc_bin, target_file]
+        unique_dirs = []
+        for d in include_dirs:
+            d_abs = os.path.abspath(d)
+            if d_abs not in unique_dirs and os.path.isdir(d_abs):
+                unique_dirs.append(d_abs)
+                cmd += ["-I", d_abs]
+
+        cmd += ["-o", self.exe_path] + self.flags
         if os.name == 'nt' and "-allow-unsupported-compiler" not in cmd:
             cmd.append("-allow-unsupported-compiler")
             
+        print(f"\n[DEBUG NVCC CMD] {' '.join(cmd)}\n")
         try:
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             error_log = ""

@@ -331,7 +331,7 @@ expert:
     --code           Use cudaProfilerApi capture range for NSYS.
 
 serve:
-    --file           GGUF file name. Default: cudaLLM-8B.Q2_K.gguf
+    --file           GGUF file name. Default: cudaLLM-8B.Q4_K_M.gguf
     --host           Bind host/interface for the server.
     --public-url     Reachable URL to store in config for clients.
     --api-key-file   Path to a file with API keys for server auth.
@@ -346,7 +346,7 @@ cudallm doctor
 cudallm optimize path/to/kernel.cu --iters 3 --profile-mode auto --nvtx
 cudallm optimize path/to/kernel.cu --dry-run
 cudallm expert ./temp_cuda_kernel.exe --auto-nvtx --rerun
-cudallm serve --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q2_K.gguf
+cudallm serve --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf --ngl 24
 """
         console.print(help_text)
 
@@ -981,7 +981,7 @@ def audit(input_file, markdown, recursive, llm_url, llm_api_key, llm_api_key_fil
                 title="File Audit"
             ))
 
-            analysis, _ = llm.generate_code(prompt, early_terminate=False)
+            analysis, _ = llm.generate_code(prompt, early_terminate=False, prefill=False)
 
             if markdown:
                 rel_path = os.path.relpath(file_path, input_file)
@@ -1010,7 +1010,7 @@ def audit(input_file, markdown, recursive, llm_url, llm_api_key, llm_api_key_fil
         title="Local CUDA Auditor"
     ))
 
-    analysis, _ = llm.generate_code(prompt, early_terminate=False)
+    analysis, _ = llm.generate_code(prompt, early_terminate=False, prefill=False)
 
     if markdown:
         out_name = f"audit_{os.path.basename(input_file)}.md"
@@ -1103,9 +1103,16 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
         console.print(Panel(f"[yellow]{reason}[/yellow]\n[cyan]Starting download and extraction for version {tag_to_download}...[/cyan]", title="Update System"))
         
      
-        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag_to_download}/llama-{tag_to_download}-bin-win-cuda-12.4-x64.zip"
-        dest_dir = os.path.join(project_dir, f"llama-{tag_to_download}-bin-win-cuda-12.4-x64")
-        zip_filepath = os.path.join(project_dir, f"llama-{tag_to_download}-bin-win-cuda-12.4-x64.zip")
+        if os.name == 'nt':
+            suffix = "bin-win-cuda-12.4-x64"
+            bin_name = "llama-server.exe"
+        else:
+            suffix = "bin-ubuntu-x64"
+            bin_name = "llama-server"
+
+        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag_to_download}/llama-{tag_to_download}-{suffix}.zip"
+        dest_dir = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}")
+        zip_filepath = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}.zip")
 
         try:
             response = requests.get(url, stream=True, timeout=15)
@@ -1131,15 +1138,20 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
                 os.remove(zip_filepath)
 
          
-            new_exe_path = os.path.join(dest_dir, "llama-server.exe")
+            new_exe_path = os.path.join(dest_dir, bin_name)
             if os.path.exists(new_exe_path):
+                if os.name != 'nt':
+                    try:
+                        os.chmod(new_exe_path, 0o755)
+                    except Exception:
+                        pass
                 config["llm_server_path"] = new_exe_path
                 config["llama_version"] = tag_to_download
                 save_config(config)
                 console.print(f"[bold green]Successfully updated to llama-server version {tag_to_download}![/bold green]")
                 exe_path = new_exe_path
             else:
-                raise Exception("llama-server.exe not found in the extracted files.")
+                raise Exception(f"{bin_name} not found in the extracted files.")
 
         except Exception as e:
        
@@ -1174,15 +1186,15 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 @click.option('--allow-unsafe-network', is_flag=True, help='Allow exposing the server without API key or TLS')
 @click.option('--reuse-port', is_flag=True, help='Allow multiple sockets to bind to the same port')
 @click.option('--repo', default='prithivMLmods/cudaLLM-8B-GGUF', help='HuggingFace repository name')
-@click.option('--file', default='cudaLLM-8B.Q2_K.gguf', help='HuggingFace GGUF model file name')
-@click.option('--ngl', default=99, help='Number of layers to offload to GPU')
-@click.option('--ctx', default=8192, help='Context size')
+@click.option('--file', default='cudaLLM-8B.Q4_K_M.gguf', help='HuggingFace GGUF model file name')
+@click.option('--ngl', default=33, help='Number of layers to offload to GPU')
+@click.option('--ctx', default=4096, help='Context size')
 @click.option('--no-update', is_flag=True, help='Disable checking for updates of llama-server')
 def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, ngl, ctx, no_update):
     """
     Launch the local llama-server with CUDA support and auto-dependency resolution.
     """
-    console.print(Panel("[bold green][INFO] Launching Local LLM Server with CUDA Support[/bold green]", border_style="green"))
+    console.print(Panel("[bold green]Launching Local LLM Server with CUDA Support[/bold green]", border_style="green"))
     
    
     env = os.environ.copy()

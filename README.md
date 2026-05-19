@@ -3,161 +3,248 @@
 [![CI](https://github.com/ThemeHackers/cudallm-cli/actions/workflows/ncu-regression.yml/badge.svg)](https://github.com/ThemeHackers/cudallm-cli/actions/workflows/ncu-regression.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Local Autonomous CUDA Optimization Agent — closed-loop tool that uses a local LLM to read, modify, compile, profile and repair CUDA kernels.
+Local Autonomous CUDA Optimization Agent — A closed-loop tool that uses a local LLM to read, modify, compile, profile, and repair CUDA kernels automatically.
 
-Table of Contents
-- [What & Why](#what--why)
-- [Key Features](#key-features)
-- [Prerequisites](#prerequisites)
-- [Install](#install)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [CI / Regression Checks](#ci--regression-checks)
+---
 
-What & Why
------------
-What: automated local toolchain for CUDA kernel optimization using an LLM-backed edit/compile/profile loop.
-Why: speeds iterative performance engineering by automating common edit/compile/profile/fix cycles and integrating `ncu`/`nsys` where available.
+## Table of Contents
+1. [What & Why](#what--why)
+2. [Key Features](#key-features)
+3. [Architecture & Workflow](#architecture--workflow)
+4. [Prerequisites](#prerequisites)
+5. [Installation](#installation)
+6. [Quick Start](#quick-start)
+7. [Detailed Command Reference](#detailed-command-reference)
+8. [Advanced Core Workflows](#advanced-core-workflows)
+   - [1. Autonomous Optimization & Self-Healing](#1-autonomous-optimization--self-healing)
+   - [2. Expert Profiling Workflow (nsys → ncu)](#2-expert-profiling-workflow-nsys--ncu)
+9. [Networking & Secure Deployment](#networking--secure-deployment)
+10. [CI/CD Regression Checks](#cicd-regression-checks)
+11. [Configuration Schema](#configuration-schema)
+12. [Troubleshooting](#troubleshooting)
 
-Key Features
-------------
-- Closed-loop optimization: generate → compile → profile → heal.
-- NVTX + code-driven profiling support for precise `nsys` captures.
-- `ncu` CSV export + simple regression comparator for CI.
-- Auto-discovery of CUDA toolchain and local LLM server path (saved to `config/config.json`).
+---
 
-Prerequisites
--------------
-- Windows machine with NVIDIA GPU and drivers.
-- CUDA Toolkit v12.6 (install from NVIDIA). Verify:
+## What & Why
+* **What**: An automated local toolchain for CUDA kernel performance engineering using an LLM-backed edit/compile/profile loop.
+* **Why**: Manual CUDA optimization is a tedious process of tweaking parameters (block sizes, tiling, memory layouts), compiling, running profilers (`ncu`, `nsys`), interpreting reports, and fixing compilation errors. `cudallm-cli` automates this entire loop.
+
+---
+
+## Key Features
+- **Closed-Loop Self-Healing**: Automatically captures NVCC compiler error logs and passes them back to the LLM to resolve syntax errors or API mismatches.
+- **Mathematical Correctness Validation**: Verifies that optimized kernels generate output matching the baseline kernel before comparing execution speed.
+- **Deep Profiling Integration**: Connects directly with NVIDIA Nsight Compute (`ncu`) and Nsight Systems (`nsys`) to collect exact hardware execution metrics.
+- **Interactive Console Dashboard**: Visualizes execution logs, live hardware metrics (CPU, RAM, GPU, VRAM usage), and code diffs in real-time.
+- **Custom Local LLM Server**: Packages `llama-server` with auto-update, GPU offloading, API key authentication, and TLS support.
+
+---
+
+## Architecture & Workflow
+
+The diagram below illustrates the closed-loop optimization and self-healing process:
+
+```mermaid
+graph TD
+    Start([Start Optimization]) --> LLMPrompt[LLM Generates Optimized Code]
+    LLMPrompt --> SaveTemp[Save to temp_kernel.cu]
+    SaveTemp --> Compile{Compile with NVCC}
+    Compile -- Fail --> HealPrompt[Create Healing Prompt with NVCC Error Log]
+    HealPrompt --> LLMHeal[LLM Repairs Code]
+    LLMHeal --> SaveTemp
+    Compile -- Success --> Verify{Verify Mathematical Correctness}
+    Verify -- Fail --> VerifyHeal[Create Verification Failure Log]
+    VerifyHeal --> LLMHeal
+    Verify -- Success --> Profile[Profile Latency & Metrics]
+    Profile --> Compare{New Latency < Best Latency?}
+    Compare -- Yes --> UpdateBest[Update Best Code & Latency]
+    Compare -- No --> LoopCheck{More Iterations?}
+    UpdateBest --> LoopCheck
+    LoopCheck -- Yes --> NextIter[Next Iteration]
+    NextIter --> LLMPrompt
+    LoopCheck -- No --> SaveFinal[Save Best Code to Output File]
+    SaveFinal --> Clean[Clean Temp Files]
+    Clean --> End([End Optimization])
+```
+
+---
+
+## Prerequisites
+- **OS**: Windows (with PowerShell/Cmd) or Linux (Git Bash supported).
+- **GPU**: NVIDIA GPU with up-to-date drivers.
+- **CUDA Toolkit**: Recommended v12.x or v13.x (with `nvcc` added to your system path).
+- **NVIDIA Nsight Tools**: Nsight Compute (`ncu`) and Nsight Systems (`nsys`) for advanced profiling modes.
+
+Verify your environment tools:
 ```powershell
 nvcc --version
-```
-- Nsight Compute (ncu). Verify:
-```powershell
 ncu --version
-```
-- Nsight Systems (nsys). Verify:
-```powershell
 nsys --version
 ```
 
-Install
--------
-1. Create and activate a Python virtual environment, then install:
+---
+
+## Installation
+
+1. Clone the repository and navigate into the directory:
+```powershell
+cd cudallm-cli
+```
+
+2. Create and activate a Python virtual environment:
 ```powershell
 python -m venv .venv
+# On Windows:
 & .\.venv\Scripts\Activate.ps1
+# On Linux/macOS:
+source .venv/bin/activate
+```
+
+3. Install the package in editable mode:
+```powershell
 pip install -e .
 ```
 
-Quick Start
------------
-1) Scan environment and persist discovered paths:
+---
+
+## Quick Start
+
+### Step 1: Scan Environment
+Run the discovery command to scan for compiler tools, profilers, and GPU capabilities. Discovered paths will be saved in `config/config.json`:
 ```powershell
 cudallm init
 ```
 
-2) Start local LLM server (must have been unzipped into repo):
+### Step 2: Launch Local LLM Server
+Download and start `llama-server` automatically with GPU acceleration:
 ```powershell
 cudallm serve --port 8080 --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q2_K.gguf
 ```
 
-LAN / multi-network usage
-
-- Bind to a LAN interface and require an API key:
+### Step 3: Run Kernel Optimization
+Optimize a target CUDA kernel using the default 3-iteration self-healing loop:
 ```powershell
-cudallm serve --host 0.0.0.0 --port 8080 --api-key-file .\secrets\llama-api.key --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q2_K.gguf
-```
-- Add TLS for cross-network deployments:
-```powershell
-cudallm serve --host 0.0.0.0 --port 8443 --ssl-key-file .\secrets\server.key --ssl-cert-file .\secrets\server.crt --api-key-file .\secrets\llama-api.key --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q2_K.gguf
-```
-- If you bind with a wildcard address such as `0.0.0.0`, pass `--public-url` so `config/config.json` stores the reachable client URL, for example `http://192.168.1.10:8080/completion` or `https://gateway.example.com:8443/completion`.
-
-3) Optimize a kernel (single file):
-```powershell
-cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto --nvtx --ncu-metrics "sm__sass_thread_inst_executed_avg"
+cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto --nvtx
 ```
 
-4) Audit source (markdown output):
+---
+
+## Detailed Command Reference
+
+| Command | Arguments | Options | Description |
+| :--- | :--- | :--- | :--- |
+| `init` | None | None | Scans system paths, locates compiler/profiler executables, and persists configuration. |
+| `doctor` / `check` | None | None | Displays a clean summary table of discovered paths and GPU capability. |
+| `serve` | None | `--host`, `--port`, `--repo`, `--file`, `--ngl`, `--ctx`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--no-update` | Starts the GGUF LLM server locally. Automatically handles downloads, updates, and GPU layer offloading (`-ngl`). |
+| `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Runs the iterative optimization agent. Supports dry runs, folder batches, custom compilers flags, and NVTX injections. |
+| `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Performs advanced profiling on a compiled binary, identifies hotspots, runs deep NCU sweeps, and outputs LLM analyses. |
+| `audit` | `<file_or_folder>` | `--markdown`, `--recursive/--no-recursive`, `--llm-url` | Performs a static structural audit on CUDA kernels using LLM prompts. Can output reports in Markdown format. |
+| `ncu` | `<exe_path>` | `-o/--output`, `--metrics` | Direct wrapper to execute Nsight Compute, exporting performance metrics into a clean CSV file. |
+| `nsys` | `<exe_path>` | `-o/--output`, `--code` | Direct wrapper to capture execution timelines using Nsight Systems. |
+| `profile` | `<exe_path>` | `--mode [auto\|ncu\|nsys]`, `--metrics`, `--code` | Runs either NCU or NSYS based on availability. |
+| `help` | None | None | Prints the plain text command reference page. |
+
+---
+
+## Advanced Core Workflows
+
+### 1. Autonomous Optimization & Self-Healing
+When running `cudallm optimize`, the tool starts a closed feedback loop:
+* **The Harness**: A temporary verification harness is generated wrapping your CUDA kernel.
+* **NVCC Compilation**: The harness is compiled. If compilation fails, the compiler error output is automatically sent to the LLM alongside the generated source code with a prompt to "heal" the compile errors.
+* **Correctness Check**: Once compiled, the binary runs and compares its mathematical output values against the baseline kernel. If verification fails, this is also sent to the LLM to fix logical discrepancies.
+* **Profiling**: Only mathematically correct kernels are profiled to determine execution time, protecting against empty or dummy speedups.
+
+#### Key Flags:
+* `--fast-math`: Injects `-use_fast_math` flags into compilation.
+* `--nvtx`: Instruments the generated harness using NVTX ranges.
+* `--profile-mode code`: Uses `cudaProfilerStart()` / `cudaProfilerStop()` inside the harness for precise profiling.
+
+---
+
+### 2. Expert Profiling Workflow (nsys → ncu)
+The `cudallm expert` command profiles a pre-compiled CUDA binary, identifies bottleneck kernels, and recommends optimizations:
+
+1. **Capture System Timeline**: Runs `nsys` to capture CPU-GPU interactions and execution markers.
+2. **Broad Sweep**: Runs `ncu` collecting standard metrics like cycles and DRAM throughput.
+3. **Hotspot Analysis**: Parses the output CSV to locate the kernel with the highest execution bottleneck.
+4. **Deep Collection Recommendations**: Recommends a targeted `ncu` command for the specific hotspot kernel.
+5. **Auto NVTX Suggestions**: Query the LLM with the profiling logs to automatically generate an `nvtx_suggestion.cu` instrumented file.
+
+Example command:
 ```powershell
-cudallm audit path/to/kernel.cu --markdown
+cudallm expert ./my_cuda_binary.exe --auto-nvtx --rerun
 ```
 
-Advanced Usage
---------------
-Profiling modes
+---
 
-- `none`: no profiler — fallback to harness timers.
-- `auto`: prefer `ncu` if available, fallback to `nsys`/timers.
-- `ncu`: run Nsight Compute for detailed kernel metrics and CSV export.
-- `nsys`: run Nsight Systems timeline capture (use with NVTX or code-driven profiling).
-- `code`: in-process `cudaProfilerStart/Stop` + NVTX ranges (best for `nsys --capture-range=cudaProfilerApi`).
+## Networking & Secure Deployment
 
-Environment and planning helpers
+`cudallm serve` is built to run securely on various environments:
 
-- `cudallm doctor` or `cudallm check` shows the discovered CUDA tools, LLM server, and config paths.
-- `cudallm optimize ... --dry-run` and `cudallm expert ... --dry-run` print the planned flow without compiling or profiling.
-- `cudallm expert ... --auto-nvtx --rerun` saves NVTX suggestions and runs a follow-up profiling pass.
-
-NVTX & code-driven profiling
-
-- To label regions, use `--nvtx` when calling `optimize` so the generated harness wraps kernels with NVTX push/pop.
-- For precise `nsys` captures, run with `--profile-mode code` which uses `cudaProfilerStart()`/`cudaProfilerStop()` in the harness and lets `nsys` capture only the profiled region.
-
-Example: run `nsys` manually against the harness produced by `optimize` (or the compiled exe)
-
+### Wildcard Interfaces
+Expose the server on local network interfaces using `--host 0.0.0.0`. When doing this, specify `--public-url` so other agents can resolve client routes:
 ```powershell
-# produce a harness executable (optimize will compile a temp exe during its run)
-cudallm optimize path/to/kernel.cu --iters 1 --profile-mode code --nvtx -o optimized.cu
-
-# capture timeline (self-hosted / local machine)
-nsys profile --output nsys_capture --capture-range=cudaProfilerApi --trace=cuda,cudnn ./temp_cuda_kernel.exe
+cudallm serve --host 0.0.0.0 --port 8080 --public-url http://192.168.1.100:8080/completion
 ```
 
-Example: run `ncu` and export CSV
+### Security Credentials
+To prevent unauthorized access, network-facing wildcards require either API Key authentication or TLS setup. You can bypass this check using `--allow-unsafe-network`.
 
+* **API Key Auth**:
+  ```powershell
+  cudallm serve --host 0.0.0.0 --api-key-file .\secrets\keys.txt
+  ```
+* **TLS Encryption**:
+  ```powershell
+  cudallm serve --host 0.0.0.0 --ssl-key-file .\secrets\server.key --ssl-cert-file .\secrets\server.crt
+  ```
+
+---
+
+## CI/CD Regression Checks
+
+To prevent slow kernels from being merged into production repositories, `cudallm` includes scripts for automated CI regression testing.
+
+### CSV Comparisons
+`tools/compare_ncu.py` compares a baseline NCU CSV metrics file with a newly collected run:
 ```powershell
-ncu --target-processes all --csv --export-path ncu_output --metrics sm__sass_thread_inst_executed_avg,dram__throughput.avg ./temp_cuda_kernel.exe
+python tools/compare_ncu.py ci/baselines/baseline.csv ncu_output.csv -c dram__throughput.avg --threshold 0.02
+```
+* Returns exit code `3` if a regression exceeding the threshold (default 2%) is detected.
+
+### Bash Regression Script
+On Linux self-hosted runners, use the `ci/ncu_regression_check.sh` utility:
+```bash
+./ci/ncu_regression_check.sh ./my_compiled_kernel ci/baselines/kernel_baseline.csv "sm__cycles_elapsed.avg" "cycles"
 ```
 
-Recommended `ncu` metric templates
+---
 
-- compute-focused: `sm__sass_thread_inst_executed_avg,sm__cycles_elapsed.avg`
-- memory-focused: `dram__throughput.avg,lts__t_bytes` (or vendor-specific DRAM metrics)
+## Configuration Schema
 
-Using `tools/compare_ncu.py`
+Config parameters are persisted inside `config/config.json`. Below is the schema structure:
+```json
+{
+  "llm_url": "http://127.0.0.1:8080/completion",
+  "llm_api_key": null,
+  "llm_api_key_file": null,
+  "llm_verify_tls": true,
+  "llm_allow_insecure_remote": false,
+  "max_stream_chunks": 2000,
+  "nvcc_path": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\nvcc.exe",
+  "nvidia_smi_path": "C:\\Windows\\system32\\nvidia-smi.exe",
+  "ncu_path": "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\ncu.bat",
+  "nsys_path": "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\host\\target-windows-x64\\nsys.exe",
+  "llm_server_path": "C:\\Users\\1com310568\\Downloads\\cudallm-cli\\llama-b9209-bin-win-cuda-12.4-x64\\llama-server.exe",
+  "last_discovery_at": "2026-05-19T20:25:00"
+}
+```
 
-- The script compares two `ncu` CSV exports. Supply baseline and current CSV paths and optionally `-c/--column` (column name or index) and `--threshold` (relative regression threshold, default 2%).
+---
 
-CI tips
+## Troubleshooting
 
-- Keep CI runs short: capture a small, representative kernel with single iteration and limited input sizes.
-- Store baseline CSVs under `ci/baselines/` and reference them in the workflow inputs.
-- Use the provided `.github/workflows/ncu-regression.yml` as a template; run it on a self-hosted GPU runner that has `nvcc`, `ncu`, and `nsys` installed.
-
-Troubleshooting
-
-- If `ncu` or `nsys` are not found, run `cudallm init` after installing the tools to refresh `config/config.json`.
-- If `nsys` captures empty timelines, ensure the harness uses `cudaProfilerStart()`/`cudaProfilerStop()` (use `--profile-mode code`) or add NVTX ranges.
-
-Configuration
--------------
-- `config/config.json` stores discovered tool paths, `llm_url`, `llm_api_key_file`, `llm_verify_tls`, `llm_allow_insecure_remote`, and `last_discovery_at`.
-- Use `cudallm init` after installing toolchain to refresh and persist paths.
-- `llama-server.exe` supports `--host`, `--api-key`, `--api-key-file`, `--ssl-key-file`, and `--ssl-cert-file`, so you can expose the server safely on a LAN or over routed networks.
-
-### Per-run LLM Overrides
-For `optimize`, `expert`, and `audit` commands, you can temporarily override the default LLM backend config on a per-run basis without modifying `config/config.json`:
-- `--llm-url` (or environment variable `LLM_URL`): Custom endpoint URL (e.g. `--llm-url http://10.212.3.55:8080/completion`).
-- `--llm-api-key` (or environment variable `LLM_API_KEY`): Custom API key.
-- `--llm-api-key-file` (or environment variable `LLM_API_KEY_FILE`): Custom API key file path.
-- `--insecure`: Bypass TLS/SSL verification and permit insecure remote HTTP connections (useful for self-signed VPNs/LANs).
-
-CI / Regression Checks
-----------------------
-- `ci/ncu_regression_check.sh` runs `ncu` (CSV) and compares with `tools/compare_ncu.py`.
-- Example workflow: `.github/workflows/ncu-regression.yml` (requires a self-hosted GPU runner with NVIDIA tools).
-
-    
+* **Profiler Not Found Error**: If `ncu` or `nsys` show `Not Found`, run `cudallm init` to force a workspace path refresh after installing NVIDIA Nsight.
+* **Empty NSYS Timelines**: If `nsys` reports do not display GPU kernel profiles, run with `--profile-mode code` to enable programmatic compiler activation or instrument kernels with NVTX.
+* **Wildcard Bind Failures**: Ensure no other server instance binds to the specified port. Use `--reuse-port` on supporting host systems.

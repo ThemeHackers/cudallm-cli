@@ -22,9 +22,9 @@ def colorize_cuda_line(line):
         comment_part = f"\033[90m//{comment_part}\033[0m"
         
     if line.strip().startswith("#"):
-        line = re.sub(r"(#\w+)\s+(<[^>]+>|\"[^\"]+\")", r"\033[34m\1\033[37m \033[32m\2\033[37m", line)
-        line = re.sub(r"(#\w+)", r"\033[34m\1\033[37m", line)
-        return f"\033[37m{line}\033[0m" + comment_part
+        line = re.sub(r"(#\w+)\s+(<[^>]+>|\"[^\"]+\")", "\x1b[34m\\1\x1b[37m \x1b[32m\\2\x1b[37m", line)
+        line = re.sub(r"(#\w+)", "\x1b[34m\\1\x1b[37m", line)
+        return f"\x1b[37m{line}\x1b[0m" + comment_part
         
     cuda_specifiers = [
         "__global__", "__device__", "__host__", "__shared__", "__constant__", 
@@ -39,7 +39,7 @@ def colorize_cuda_line(line):
     ]
 
   
-    line = re.sub(r"\b(\w+)\s*\(", r"\x00FUNC\1\x00ENDFUNC(", line)
+    line = re.sub(r"\b(\w+)\s*\(", "\x00FUNC\\1\x00ENDFUNC(", line)
     
 
     for spec in cuda_specifiers:
@@ -54,7 +54,7 @@ def colorize_cuda_line(line):
         line = re.sub(rf"\b{t}\b", f"\033[36m{t}\033[37m", line)
         
    
-    line = re.sub(r"\b(\d+\.?\d*f?)\b", r"\033[38;5;208m\1\033[37m", line)
+    line = re.sub(r"\b(\d+\.?\d*f?)\b", "\x1b[38;5;208m\\1\x1b[37m", line)
     
    
     line = line.replace("\x00FUNC", "\033[1;33m").replace("\x00ENDFUNC", "\033[37m")
@@ -108,8 +108,28 @@ class LLMClient:
 
         return re.search(r"\b(?:void|int|float|double|__global__|__device__)\s+\w+\s*\([^)]*\)\s*{", snippet) is not None
         
-    def generate_code(self, prompt, max_tokens=4096, status_callback=None, early_terminate=True):
+    def _extract_kernels(self, code):
+        kernels = []
+        for line in code.splitlines():
+            if "__global__" in line:
+                match = re.search(r'\b(?:void|\w+)\s+(\w+)\s*\(', line)
+                if match:
+                    kernels.append(match.group(1))
+        seen = set()
+        unique_kernels = []
+        for k in kernels:
+            if k not in seen:
+                seen.add(k)
+                unique_kernels.append(k)
+        return unique_kernels
+
+    def generate_code(self, prompt, max_tokens=4096, status_callback=None, early_terminate=True, prefill=False):
         start_time = time.time()
+
+        prefilled = False
+        if prefill and prompt.endswith("<|im_start|>assistant\n"):
+            prompt += "```cuda\n"
+            prefilled = True
 
         payload = {
             "prompt": prompt,
@@ -161,7 +181,7 @@ class LLMClient:
             return None, 0
 
 
-        result_text = ""
+        result_text = "```cuda\n" if prefilled else ""
         tokens_generated = 0
         if status_callback:
             status_callback("AI Thinking & Code Generation started...")
@@ -355,6 +375,7 @@ class LLMClient:
 
                 console.print(f"\n[bold green]Generation complete! Total tokens: {tokens_generated} (In {time.time() - start_time:.2f}s)[/bold green]")
 
+           
             think_match = re.search(r"<think>(.*?)</think>", result_text, re.DOTALL)
             if think_match:
                 result_text = result_text.replace(think_match.group(0), "").strip()
@@ -363,12 +384,17 @@ class LLMClient:
                     parts = result_text.split("<think>")
                     result_text = parts[0].strip()
 
+       
+            code_match = re.search(r"```(?:cuda|cpp|c)?\n(.*?)\n```", result_text, re.DOTALL)
+            if code_match:
                 return code_match.group(1).strip(), time.time() - start_time
 
+        
             code_match_open = re.search(r"```(?:cuda|cpp|c)?\n(.*)", result_text, re.DOTALL)
             if code_match_open:
                 return code_match_open.group(1).strip(), time.time() - start_time
 
+         
             if self._looks_like_cuda_code(result_text):
                 return result_text.strip(), time.time() - start_time
 
@@ -387,6 +413,13 @@ class LLMClient:
             return "", 0.0
 
     def create_optimization_prompt(self, code, env_info, target, best_time, flags):
+        kernels = self._extract_kernels(code)
+        if kernels:
+            kernel_list_str = ", ".join(kernels)
+            kernel_instruction = f"all kernels ({kernel_list_str})"
+        else:
+            kernel_instruction = "all kernels"
+
         system_prompt = (
             f"You are a world-class CUDA optimization expert. Optimize the user's CUDA code for high performance on {env_info['gpu_model']} "
             f"(Compute {env_info['compute_capability']}, CUDA {env_info['cuda_version']}).\n"
@@ -398,12 +431,11 @@ class LLMClient:
             
         system_prompt += (
             "CRITICAL INSTRUCTIONS:\n"
-            "1. First, write your detailed step-by-step reasoning, optimization strategy, and analytical thoughts inside <think>...</think> tags. "
-            "Keep your reasoning inside <think> extremely concise, clear, and direct (maximum 150-200 words) so you have enough token budget for the code.\n"
+            "1. First, write your step-by-step performance analysis and optimization plan inside a <think>...</think> tag block. Keep it highly technical and concise (max 200 words).\n"
             "2. Second, write the final complete optimized CUDA code inside a ```cuda ... ``` markdown block.\n"
-            "Do not output anything else outside these blocks.\n"
-            "3. CRITICAL: NEVER use lazy placeholders like '...' or leave parts of the code as 'TODO'. You MUST output the entire, fully-functional, and mathematically complete CUDA kernels!\n"
-            "4. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of all kernels (dft_kernel, fft_shared_kernel, vision_filter_kernel, pattern_match_kernel) exactly as provided in the input code. Do NOT alter parameter types (e.g., do not change uchar4* to unsigned char*, or remove arguments), as they are strictly benchmarked by an external host wrapper."
+            "3. Do NOT write any introduction, explanation, reasoning, or text outside the <think> or ```cuda blocks.\n"
+            "4. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
+            f"5. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided in the input code. Do NOT alter parameter types, as they are strictly benchmarked by an external host wrapper."
         )
         
         user_prompt = f"Optimize the following CUDA code:\n\n```cuda\n{code}\n```"
@@ -417,16 +449,22 @@ class LLMClient:
         )
 
     def create_healing_prompt(self, code, error_log):
+        kernels = self._extract_kernels(code)
+        if kernels:
+            kernel_list_str = ", ".join(kernels)
+            kernel_instruction = f"all kernels ({kernel_list_str})"
+        else:
+            kernel_instruction = "all kernels"
+
         system_prompt = (
             "You are a world-class CUDA compiler and debugging assistant. Your task is to fix compilation errors or correctness failures "
             "in the user's CUDA code.\n"
             "CRITICAL INSTRUCTIONS:\n"
-            "1. First, write your compilation error analysis and correction strategy inside <think>...</think> tags. "
-            "Keep this reasoning block extremely concise (maximum 100 words).\n"
+            "1. First, write your compilation error analysis and correction strategy inside a <think>...</think> tag block. Keep it concise.\n"
             "2. Second, write the fixed, complete CUDA code inside a ```cuda ... ``` markdown block.\n"
-            "Do not output anything else outside these blocks.\n"
-            "3. CRITICAL: NEVER use lazy placeholders like '...' or leave parts of the code as 'TODO'. You MUST output the entire, fully-functional, and mathematically complete CUDA kernels!\n"
-            "4. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of all kernels (dft_kernel, fft_shared_kernel, vision_filter_kernel, pattern_match_kernel) exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
+            "3. Do NOT write any introduction, explanation, reasoning, or text outside the <think> or ```cuda blocks.\n"
+            "4. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
+            f"5. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
         )
         
         user_prompt = (

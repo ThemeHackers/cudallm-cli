@@ -10,11 +10,17 @@ def _pick_first_existing(candidates):
             return candidate
     return None
 
+def _normalize_ext(path):
+    if not path:
+        return path
+    base, ext = os.path.splitext(path)
+    return base + ext.lower()
+
 def find_nvcc_path():
 
     sys_path = shutil.which('nvcc')
     if sys_path:
-        return sys_path
+        return _normalize_ext(sys_path)
         
  
     if os.name == 'nt':
@@ -26,7 +32,7 @@ def find_nvcc_path():
                 cuda_envs.append(os.path.join(value, "bin", "nvcc.exe"))
         found_env = _pick_first_existing(cuda_envs)
         if found_env:
-            return found_env
+            return _normalize_ext(found_env)
 
         roots = [
             os.environ.get("ProgramFiles", r"C:\Program Files"),
@@ -38,14 +44,14 @@ def find_nvcc_path():
             matches.extend(glob.glob(pattern))
         if matches:
             matches.sort(reverse=True)
-            return matches[0]
+            return _normalize_ext(matches[0])
     return None
 
 def find_nvidia_smi_path():
   
     sys_path = shutil.which('nvidia-smi')
     if sys_path:
-        return sys_path
+        return _normalize_ext(sys_path)
         
    
     if os.name == 'nt':
@@ -57,13 +63,13 @@ def find_nvidia_smi_path():
         ]
         found = _pick_first_existing(candidates)
         if found:
-            return found
+            return _normalize_ext(found)
     return None
 
 def find_ncu_path():
     sys_path = shutil.which('ncu')
     if sys_path:
-        return sys_path
+        return _normalize_ext(sys_path)
         
     if os.name == 'nt':
         roots = [
@@ -77,13 +83,13 @@ def find_ncu_path():
             candidates.extend(glob.glob(os.path.join(root, "Nsight Compute*", "target", "**", "ncu.exe"), recursive=True))
             candidates.extend(glob.glob(os.path.join(root, "**", "ncu.exe"), recursive=True))
             if candidates:
-                return candidates[0]
+                return _normalize_ext(candidates[0])
     return None
 
 def find_nsys_path():
     sys_path = shutil.which('nsys')
     if sys_path:
-        return sys_path
+        return _normalize_ext(sys_path)
 
     if os.name == 'nt':
         roots = [
@@ -97,26 +103,27 @@ def find_nsys_path():
             candidates.extend(glob.glob(os.path.join(root, "Nsight Systems*", "target*", "**", "nsys.exe"), recursive=True))
             candidates.extend(glob.glob(os.path.join(root, "**", "nsys.exe"), recursive=True))
             if candidates:
-                return candidates[0]
+                return _normalize_ext(candidates[0])
     return None
 
 def find_llm_server_path(project_dir=None):
     for tool_name in ('llm-server', 'llama-server'):
         sys_path = shutil.which(tool_name)
         if sys_path:
-            return sys_path
+            return _normalize_ext(sys_path)
 
     if project_dir and os.path.exists(project_dir):
+        ext = ".exe" if os.name == 'nt' else ""
         patterns = [
-            os.path.join(project_dir, "llm-b*", "llm-server.exe"),
-            os.path.join(project_dir, "llama-b*", "llama-server.exe"),
-            os.path.join(project_dir, "**", "llm-server.exe"),
-            os.path.join(project_dir, "**", "llama-server.exe"),
+            os.path.join(project_dir, "llm-b*", f"llm-server{ext}"),
+            os.path.join(project_dir, "llama-b*", f"llama-server{ext}"),
+            os.path.join(project_dir, "**", f"llm-server{ext}"),
+            os.path.join(project_dir, "**", f"llama-server{ext}"),
         ]
         for pattern in patterns:
             for candidate in glob.glob(pattern, recursive=True):
                 if os.path.exists(candidate):
-                    return candidate
+                    return _normalize_ext(candidate)
 
     return None
 
