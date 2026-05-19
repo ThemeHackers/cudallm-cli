@@ -337,6 +337,7 @@ serve:
     --api-key-file   Path to a file with API keys for server auth.
     --ssl-key-file   PEM private key for HTTPS.
     --ssl-cert-file  PEM certificate for HTTPS.
+    --no-update      Disable checking for updates of llama-server.
 
 Examples
 --------
@@ -1019,6 +1020,149 @@ def audit(input_file, markdown, recursive, llm_url, llm_api_key, llm_api_key_fil
     else:
         console.print("\n[bold green][INFO] Architectural Audit complete![/bold green]")
 
+def check_and_update_llama_server(project_dir, config, no_update=False):
+    import re
+    import urllib.request
+    import requests
+    import zipfile
+
+
+    exe_path = config.get("llm_server_path")
+    if exe_path and not os.path.exists(exe_path):
+        exe_path = None
+
+    if not exe_path:
+        exe_path = find_llm_server_path(project_dir)
+
+    current_tag = None
+    if exe_path:
+
+        match = re.search(r'llama-(b\d+)-bin', exe_path)
+        if match:
+            current_tag = match.group(1)
+        else:
+            current_tag = config.get("llama_version")
+
+ 
+    latest_tag = None
+    if not no_update:
+        console.print("[cyan]Checking for llama-server updates from GitHub...[/cyan]")
+        try:
+          
+            req = urllib.request.Request(
+                "https://github.com/ggml-org/llama.cpp/releases/latest",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=3) as response:
+                final_url = response.geturl()
+                parts = final_url.split('/')
+                tag = parts[-1]
+                if tag.startswith('b') and tag[1:].isdigit():
+                    latest_tag = tag
+        except Exception:
+
+            try:
+                req = urllib.request.Request(
+                    "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                )
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                    tag = data.get('tag_name')
+                    if tag and tag.startswith('b') and tag[1:].isdigit():
+                        latest_tag = tag
+            except Exception:
+                pass
+
+  
+    def parse_version_num(t):
+        if t and t.startswith('b'):
+            try:
+                return int(t[1:])
+            except ValueError:
+                pass
+        return 0
+
+    fallback_tag = "b9222"
+    tag_to_download = latest_tag or fallback_tag
+
+    current_num = parse_version_num(current_tag)
+    latest_num = parse_version_num(latest_tag)
+
+    should_download = False
+    reason = ""
+
+    if not exe_path:
+        should_download = True
+        reason = "llama-server is not found locally."
+    elif latest_tag and latest_num > current_num:
+        should_download = True
+        reason = f"A new version {latest_tag} is available (Current: {current_tag or 'unknown'})."
+
+    if should_download:
+        console.print(Panel(f"[yellow]{reason}[/yellow]\n[cyan]Starting download and extraction for version {tag_to_download}...[/cyan]", title="Update System"))
+        
+     
+        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag_to_download}/llama-{tag_to_download}-bin-win-cuda-12.4-x64.zip"
+        dest_dir = os.path.join(project_dir, f"llama-{tag_to_download}-bin-win-cuda-12.4-x64")
+        zip_filepath = os.path.join(project_dir, f"llama-{tag_to_download}-bin-win-cuda-12.4-x64.zip")
+
+        try:
+            response = requests.get(url, stream=True, timeout=15)
+            if response.status_code != 200:
+                raise Exception(f"HTTP Status {response.status_code}")
+
+            total_size = int(response.headers.get('content-length', 0))
+            
+            with click.progressbar(length=total_size, label=f'Downloading {tag_to_download}') as bar:
+                with open(zip_filepath, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            bar.update(len(chunk))
+
+            console.print("[green]Download complete. Extracting files...[/green]")
+            os.makedirs(dest_dir, exist_ok=True)
+            with zipfile.ZipFile(zip_filepath, 'r') as zip_ref:
+                zip_ref.extractall(dest_dir)
+
+    
+            if os.path.exists(zip_filepath):
+                os.remove(zip_filepath)
+
+         
+            new_exe_path = os.path.join(dest_dir, "llama-server.exe")
+            if os.path.exists(new_exe_path):
+                config["llm_server_path"] = new_exe_path
+                config["llama_version"] = tag_to_download
+                save_config(config)
+                console.print(f"[bold green]Successfully updated to llama-server version {tag_to_download}![/bold green]")
+                exe_path = new_exe_path
+            else:
+                raise Exception("llama-server.exe not found in the extracted files.")
+
+        except Exception as e:
+       
+            if os.path.exists(zip_filepath):
+                try:
+                    os.remove(zip_filepath)
+                except Exception:
+                    pass
+            
+            console.print(f"[bold red][ERROR] Failed to download/update llama-server: {e}[/bold red]")
+            if exe_path:
+                console.print("[yellow]Falling back to current local llama-server.[/yellow]")
+            else:
+                console.print("[bold red]Please manually download llama-server and set it up.[/bold red]")
+                sys.exit(1)
+    else:
+        if current_tag:
+            console.print(f"[green]llama-server is up to date (Version: {current_tag}).[/green]")
+        else:
+            console.print("[green]llama-server is already installed.[/green]")
+
+    return exe_path
+
 @main.command()
 @click.option('--port', default=8080, help='Port to run the LLM server on')
 @click.option('--host', default='127.0.0.1', help='Host/interface for llama-server to bind to')
@@ -1033,7 +1177,8 @@ def audit(input_file, markdown, recursive, llm_url, llm_api_key, llm_api_key_fil
 @click.option('--file', default='cudaLLM-8B.Q2_K.gguf', help='HuggingFace GGUF model file name')
 @click.option('--ngl', default=99, help='Number of layers to offload to GPU')
 @click.option('--ctx', default=8192, help='Context size')
-def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, ngl, ctx):
+@click.option('--no-update', is_flag=True, help='Disable checking for updates of llama-server')
+def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, ngl, ctx, no_update):
     """
     Launch the local llama-server with CUDA support and auto-dependency resolution.
     """
@@ -1053,16 +1198,7 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
  
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config = refresh_config_paths(project_dir)
-    exe_path = config.get("llm_server_path") if config.get("llm_server_path") and os.path.exists(config.get("llm_server_path")) else find_llm_server_path(project_dir)
-    if exe_path:
-        console.print(f"[bold green][INFO] Located LLM server at:[/bold green] {exe_path}")
-        if config.get("llm_server_path") != exe_path:
-            config["llm_server_path"] = exe_path
-            save_config(config)
-    else:
-        console.print("[bold red][ERROR] Could not find llm-server.exe or llama-server.exe![/bold red]")
-        console.print("Please place the server folder inside the cudallm-cli project directory or add it to PATH.")
-        return
+    exe_path = check_and_update_llama_server(project_dir, config, no_update)
 
     api_keys_enabled = bool(api_key or api_key_file)
     tls_enabled = bool(ssl_key_file and ssl_cert_file)
@@ -1089,6 +1225,18 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
     if tls_enabled:
         config["llm_verify_tls"] = True
     save_config(config)
+
+
+    if repo == "prithivMLmods/cudaLLM-8B-GGUF":
+        spaced_files = {
+            "cudaLLM-8B.Q2_K.gguf",
+            "cudaLLM-8B.Q4_K_M.gguf",
+            "cudaLLM-8B.Q5_K_M.gguf",
+            "cudaLLM-8B.Q8_0.gguf"
+        }
+        stripped_file = file.strip()
+        if stripped_file in spaced_files:
+            file = " " + stripped_file
 
     cmd = [
         exe_path,

@@ -41,8 +41,9 @@ class CLIDefaultsTest(unittest.TestCase):
         self.assertIn("ssl_key_file", serve_options)
         self.assertIn("ssl_cert_file", serve_options)
         self.assertIn("allow_unsafe_network", serve_options)
+        self.assertIn("no_update", serve_options)
 
-        # Assert LLM overrides exist
+       
         for opt in ["llm_url", "llm_api_key", "llm_api_key_file", "insecure"]:
             self.assertIn(opt, optimize_options)
             self.assertIn(opt, expert_options)
@@ -58,24 +59,44 @@ class CLIDefaultsTest(unittest.TestCase):
             "llm_allow_insecure_remote": False,
         }
 
-        # 1. URL override
         c = apply_llm_overrides(config.copy(), llm_url="http://new-url:8080/completion")
         self.assertEqual(c["llm_url"], "http://new-url:8080/completion")
 
-        # 2. API Key override (should clear out key file)
+    
         c = apply_llm_overrides(config.copy(), llm_api_key="new-key")
         self.assertEqual(c["llm_api_key"], "new-key")
         self.assertIsNone(c["llm_api_key_file"])
 
-        # 3. API Key File override (should clear out key)
+     
         c = apply_llm_overrides(config.copy(), llm_api_key_file="new-file")
         self.assertEqual(c["llm_api_key_file"], "new-file")
         self.assertIsNone(c["llm_api_key"])
 
-        # 4. Insecure override
+       
         c = apply_llm_overrides(config.copy(), insecure=True)
         self.assertFalse(c["llm_verify_tls"])
         self.assertTrue(c["llm_allow_insecure_remote"])
+
+    def test_check_and_update_llama_server_no_update_exists(self):
+        from src.cli import check_and_update_llama_server
+        import tempfile
+        import os
+
+    
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server_bin = os.path.join(tmpdir, "llama-b9222-bin-win-cuda-12.4-x64", "llama-server.exe")
+            os.makedirs(os.path.dirname(server_bin), exist_ok=True)
+            with open(server_bin, "w") as f:
+                f.write("dummy")
+
+            config = {
+                "llm_server_path": server_bin,
+                "llama_version": "b9222"
+            }
+
+         
+            path = check_and_update_llama_server(tmpdir, config, no_update=True)
+            self.assertEqual(path, server_bin)
 
 
 if __name__ == "__main__":
