@@ -148,6 +148,13 @@ Configuration
 - Use `cudallm init` after installing toolchain to refresh and persist paths.
 - `llama-server.exe` supports `--host`, `--api-key`, `--api-key-file`, `--ssl-key-file`, and `--ssl-cert-file`, so you can expose the server safely on a LAN or over routed networks.
 
+### Per-run LLM Overrides
+For `optimize`, `expert`, and `audit` commands, you can temporarily override the default LLM backend config on a per-run basis without modifying `config/config.json`:
+- `--llm-url` (or environment variable `LLM_URL`): Custom endpoint URL (e.g. `--llm-url http://10.212.3.55:8080/completion`).
+- `--llm-api-key` (or environment variable `LLM_API_KEY`): Custom API key.
+- `--llm-api-key-file` (or environment variable `LLM_API_KEY_FILE`): Custom API key file path.
+- `--insecure`: Bypass TLS/SSL verification and permit insecure remote HTTP connections (useful for self-signed VPNs/LANs).
+
 CI / Regression Checks
 ----------------------
 - `ci/ncu_regression_check.sh` runs `ncu` (CSV) and compares with `tools/compare_ncu.py`.
