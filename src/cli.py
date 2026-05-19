@@ -253,9 +253,27 @@ def print_dry_run_panel(title, lines, border_style="yellow"):
     console.print(Panel("\n".join(lines), title=title, border_style=border_style))
 
 def render_environment_summary(title="Local CUDA Environment Status"):
+    import socket
+    from urllib.parse import urlparse
+
     with console.status("[bold green]Inspecting local hardware & environment...[/bold green]"):
         env_status = check_environment()
         config = refresh_config_paths(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+        llm_status = "Offline"
+        try:
+            parsed = urlparse(config.get('llm_url', ''))
+            if parsed.hostname and parsed.port:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.0)
+                s.connect((parsed.hostname, parsed.port))
+                llm_status = "Online (Port Accessible)"
+                s.close()
+            else:
+                llm_status = "Unknown / Invalid URL"
+        except Exception:
+            llm_status = "Offline"
 
     table = Table(title=title, show_header=True, header_style="bold magenta")
     table.add_column("Property", style="cyan", width=25)
@@ -270,6 +288,7 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     table.add_row("VRAM Total", str(env_status.get("vram_total", "N/A")))
     table.add_row("CUDA Version", str(env_status.get("cuda_version", "N/A")))
     table.add_row("LLM URL", str(config.get("llm_url", "N/A")))
+    table.add_row("LLM Connection", llm_status)
     table.add_row("NVCC Path", str(env_status.get("nvcc_path", "N/A")))
     table.add_row("NVIDIA SMI Path", str(env_status.get("nvidia_smi_path", "N/A")))
     table.add_row("Nsight Compute Path", str(env_status.get("ncu_path", "N/A")))
@@ -1105,14 +1124,16 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
      
         if os.name == 'nt':
             suffix = "bin-win-cuda-12.4-x64"
+            ext = ".zip"
             bin_name = "llama-server.exe"
         else:
             suffix = "bin-ubuntu-x64"
+            ext = ".tar.gz"
             bin_name = "llama-server"
 
-        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag_to_download}/llama-{tag_to_download}-{suffix}.zip"
+        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag_to_download}/llama-{tag_to_download}-{suffix}{ext}"
         dest_dir = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}")
-        zip_filepath = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}.zip")
+        archive_filepath = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}{ext}")
 
         try:
             response = requests.get(url, stream=True, timeout=15)
@@ -1122,7 +1143,7 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
             total_size = int(response.headers.get('content-length', 0))
             
             with click.progressbar(length=total_size, label=f'Downloading {tag_to_download}') as bar:
-                with open(zip_filepath, 'wb') as f:
+                with open(archive_filepath, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
@@ -1130,15 +1151,28 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 
             console.print("[green]Download complete. Extracting files...[/green]")
             os.makedirs(dest_dir, exist_ok=True)
-            with zipfile.ZipFile(zip_filepath, 'r') as zip_ref:
-                zip_ref.extractall(dest_dir)
+            if ext == ".zip":
+                with zipfile.ZipFile(archive_filepath, 'r') as zip_ref:
+                    zip_ref.extractall(dest_dir)
+            else:
+                import tarfile
+                with tarfile.open(archive_filepath, 'r:gz') as tar_ref:
+                    tar_ref.extractall(dest_dir)
 
     
-            if os.path.exists(zip_filepath):
-                os.remove(zip_filepath)
+            if os.path.exists(archive_filepath):
+                os.remove(archive_filepath)
 
          
             new_exe_path = os.path.join(dest_dir, bin_name)
+            # Sometimes tar files extract into a subdirectory, let's find the binary in the extracted files if it's not direct
+            if not os.path.exists(new_exe_path):
+                # Search for it recursively inside dest_dir
+                for root, dirs, files_list in os.walk(dest_dir):
+                    if bin_name in files_list:
+                        new_exe_path = os.path.join(root, bin_name)
+                        break
+
             if os.path.exists(new_exe_path):
                 if os.name != 'nt':
                     try:
@@ -1155,9 +1189,9 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 
         except Exception as e:
        
-            if os.path.exists(zip_filepath):
+            if os.path.exists(archive_filepath):
                 try:
-                    os.remove(zip_filepath)
+                    os.remove(archive_filepath)
                 except Exception:
                     pass
             
