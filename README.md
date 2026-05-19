@@ -1,6 +1,6 @@
 # cudallm-cli
 
-[![CI](https://img.shields.io/badge/ci-none-lightgrey)](https://github.com/)
+[![CI](https://github.com/ThemeHackers/cudallm-cli/actions/workflows/ncu-regression.yml/badge.svg)](https://github.com/ThemeHackers/cudallm-cli/actions/workflows/ncu-regression.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Local Autonomous CUDA Optimization Agent — closed-loop tool that uses a local LLM to read, modify, compile, profile and repair CUDA kernels.
