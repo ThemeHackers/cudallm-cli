@@ -13,8 +13,6 @@ Table of Contents
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [CI / Regression Checks](#ci--regression-checks)
-- [Contributing](#contributing)
-- [License & Credits](#license--credits)
 
 What & Why
 -----------
