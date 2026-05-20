@@ -34,20 +34,11 @@ def detect_cuda_version():
 def verify_cuda_enabled():
     """Verify that llama-cpp-python has CUDA support enabled."""
     print("[INFO] Verifying CUDA support in llama-cpp-python...")
-    check_cmd = (
-        f"{sys.executable} -c \""
-        "import llama_cpp; "
-        "print('llama_cpp_version:', llama_cpp.__version__); "
-        "print('CUDA supported:', hasattr(llama_cpp, 'llama_cpp_cuda')); "
-        "try: "
-        "  import llama_cpp.llama_cpp_cuda as cuda; "
-        "  print('CUDA module loaded successfully'); "
-        "except ImportError as e: "
-        "  print('CUDA module import failed:', e)\""
-    )
+    check_cmd = f"{sys.executable} -c \"import llama_cpp; print('llama_cpp_version:', llama_cpp.__version__); print('CUDA supported:', hasattr(llama_cpp, 'llama_cpp_cuda')); import llama_cpp.llama_cpp_cuda as cuda; print('CUDA module loaded successfully')\""
     code, stdout, _ = run_command(check_cmd)
     if code != 0:
-        print("[ERROR] Failed to verify CUDA support")
+        print("[WARNING] CUDA module import failed, but this may be expected for CPU-only builds")
+        print("[INFO] Output:", stdout)
         return False
 
     print("[INFO] CUDA verification output:")
