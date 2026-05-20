@@ -26,6 +26,16 @@ def ensure_python_dependencies(repo_root):
     else:
         print("[WARNING] requirements.txt not found; skipping dependency install.")
 
+    print("[INFO] Forcing CUDA-enabled llama-cpp-python install...")
+    cuda_llama_cmd = (
+        f'FORCE_CMAKE=1 CMAKE_ARGS="-DGGML_CUDA=on" '
+        f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python'
+    )
+    code, _, err = run_command(cuda_llama_cmd)
+    if code != 0:
+        print(f"[ERROR] Failed to install CUDA-enabled llama-cpp-python: {err}")
+        sys.exit(1)
+
     check_cmd = (
         f"{sys.executable} -c \""
         "import fastapi,uvicorn,huggingface_hub; "
