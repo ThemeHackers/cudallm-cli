@@ -102,7 +102,7 @@ cudallm init
 ### Step 2: Launch Local LLM Server
 Download and start `llama-server` automatically with GPU acceleration:
 ```powershell
-cudallm serve --port 8080 --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q2_K.gguf
+cudallm serve --port 8080 --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf
 ```
 
 ### Step 3: Run Kernel Optimization

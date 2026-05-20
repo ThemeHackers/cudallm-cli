@@ -59,6 +59,33 @@ def try_import(name):
         return None
 
 
+def resolve_hf_filename(repo_id: str, requested_filename: str) -> str:
+    requested = (requested_filename or "").strip()
+    if not requested:
+        raise RuntimeError("No HF filename supplied")
+
+    hub = try_import("huggingface_hub")
+    if hub is None:
+        raise RuntimeError("huggingface_hub is required for --hf-repo/--hf-file. Install: pip install huggingface_hub")
+
+    from huggingface_hub import list_repo_files
+
+    repo_files = list_repo_files(repo_id=repo_id)
+    if requested in repo_files:
+        return requested
+
+    stripped_matches = [name for name in repo_files if name.strip() == requested]
+    if stripped_matches:
+        if requested_filename in stripped_matches:
+            return requested_filename
+        return stripped_matches[0]
+
+    available = ", ".join(repo_files[:20])
+    raise RuntimeError(
+        f"No file found in {repo_id} that match {requested}. Available Files:\n[{available}]"
+    )
+
+
 class LLMWrapper:
     def __init__(self, model_path=None, hf_repo=None, hf_file=None, use_cuda=False):
         self.model_path = model_path
@@ -84,10 +111,11 @@ class LLMWrapper:
                 if self.model_path:
                     llm_kwargs = {'model_path': self.model_path}
                 elif self.hf_repo and self.hf_file:
-                    print(f'[INFO] Downloading GGUF from HF via llama-cpp-python: repo={self.hf_repo} file={self.hf_file}')
+                    resolved_filename = resolve_hf_filename(self.hf_repo, self.hf_file)
+                    print(f'[INFO] Downloading GGUF from HF via llama-cpp-python: repo={self.hf_repo} file={resolved_filename}')
                     llm_kwargs = {
                         'repo_id': self.hf_repo,
-                        'filename': self.hf_file,
+                        'filename': resolved_filename,
                     }
                 elif self.hf_file and os.path.exists(self.hf_file):
                     llm_kwargs = {'model_path': self.hf_file}

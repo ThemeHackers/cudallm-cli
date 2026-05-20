@@ -14,7 +14,7 @@ class CLIDefaultsTest(unittest.TestCase):
     def test_serve_default_filename_is_trimmed(self):
         file_option = get_option("serve", "file")
 
-        self.assertEqual(file_option.default, "cudaLLM-8B.Q2_K.gguf")
+        self.assertEqual(file_option.default, "cudaLLM-8B.Q4_K_M.gguf")
         self.assertFalse(str(file_option.default).startswith(" "))
 
     def test_help_uses_click_help_and_lists_new_commands(self):

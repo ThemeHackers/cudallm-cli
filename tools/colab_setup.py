@@ -101,7 +101,7 @@ def main():
 
     server_py_path = os.path.join(repo_root, "tools", "server.py")
     model_repo = "prithivMLmods/cudaLLM-8B-GGUF"
-    model_file = "cudaLLM-8B.Q2_K.gguf"
+    model_file = "cudaLLM-8B.Q4_K_M.gguf"
 
     if not os.path.exists(server_py_path):
         print(f"[ERROR] Python backend not found: {server_py_path}")

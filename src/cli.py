@@ -1138,7 +1138,7 @@ def check_and_prepare_python_server(project_dir, config):
 @click.option('--allow-unsafe-network', is_flag=True, help='Allow exposing the server without API key or TLS')
 @click.option('--reuse-port', is_flag=True, help='Allow multiple sockets to bind to the same port')
 @click.option('--repo', default='prithivMLmods/cudaLLM-8B-GGUF', help='HuggingFace repository name')
-@click.option('--file', default='cudaLLM-8B.Q2_K.gguf', help='HuggingFace GGUF model file name')
+@click.option('--file', default='cudaLLM-8B.Q4_K_M.gguf', help='HuggingFace GGUF model file name')
 @click.option('--local-model', default=None, help='Local model path (GGUF or HF local directory)')
 @click.option('--use-cuda/--no-use-cuda', default=True, help='Enable CUDA for the Python backend')
 @click.option('--ngl', default=33, help='Deprecated. Kept for compatibility; ignored by Python backend')
