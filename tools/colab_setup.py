@@ -40,12 +40,24 @@ def ensure_python_dependencies(repo_root):
     else:
         print("[WARNING] requirements.txt not found; skipping dependency install.")
 
-    print("[INFO] Forcing CUDA-enabled llama-cpp-python install...")
+    print("[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels (much faster)...")
+    # Try pre-built wheels first (much faster than compiling from source)
     cuda_llama_cmd = (
-        f'FORCE_CMAKE=1 CMAKE_ARGS="-DGGML_CUDA=on" '
-        f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python'
+        f'{sys.executable} -m pip install llama-cpp-python '
+        f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124'
     )
     code, _, err = run_command(cuda_llama_cmd)
+
+    # Fallback to compile if pre-built wheel fails
+    if code != 0:
+        print("[WARNING] Pre-built wheel installation failed, falling back to compile from source...")
+        print("[INFO] This may take 10-20 minutes, please be patient...")
+        cuda_llama_cmd = (
+            f'FORCE_CMAKE=1 CMAKE_ARGS="-DGGML_CUDA=on" '
+            f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python'
+        )
+        code, _, err = run_command(cuda_llama_cmd)
+
     if code != 0:
         print(f"[ERROR] Failed to install CUDA-enabled llama-cpp-python: {err}")
         sys.exit(1)

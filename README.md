@@ -65,26 +65,125 @@ nsys --version
 
 ## Installation
 
-1. Clone the repository and navigate into the directory:
-```powershell
-cd cudallm-cli
-```
+### Windows Local Installation
 
-2. Create and activate a Python virtual environment:
-```powershell
-python -m venv .venv
-# On Windows:
-& .\.venv\Scripts\Activate.ps1
-# On Linux/macOS:
-source .venv/bin/activate
-```
+1. **Prerequisites Check**:
+   - Verify NVIDIA GPU drivers are installed:
+   ```powershell
+   nvidia-smi
+   ```
+   - Verify CUDA Toolkit (v12.x or v13.x):
+   ```powershell
+   nvcc --version
+   ```
+   - Verify Python 3.8+ is installed:
+   ```powershell
+   python --version
+   ```
 
-3. Install the package in editable mode:
-```powershell
-pip install -e .
-```
+2. **Clone the repository**:
+   ```powershell
+   git clone https://github.com/ThemeHackers/cudallm-cli.git
+   cd cudallm-cli
+   ```
 
-  If you want the optional GPU extras, install them with:
+3. **Create and activate Python virtual environment**:
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\activate
+   ```
+   *หมายเหตุ: ถ้าเกิด error เกี่ยวกับ execution policy ให้รันคำสั่งนี้ก่อน:*
+   ```powershell
+   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+4. **Install dependencies and package**:
+   ```powershell
+   pip install -r requirements.txt
+   pip install -e .
+   ```
+
+5. **Initialize environment**:
+   ```powershell
+   cudallm init
+   ```
+
+6. **Verify installation**:
+   ```powershell
+   cudallm doctor
+   ```
+
+### Google Colab Installation (Tesla T4 GPU)
+
+1. **Open Google Colab notebook** and enable GPU:
+   - Go to Runtime → Change runtime type → Hardware accelerator → GPU (T4)
+
+2. **Install CUDA Toolkit** (Colab มี CUDA อยู่แล้ว แต่ต้องตรวจสอบ):
+   ```bash
+   !nvcc --version
+   !nvidia-smi
+   ```
+
+3. **Clone repository and install**:
+   ```bash
+   !git clone https://github.com/ThemeHackers/cudallm-cli.git
+   %cd cudallm-cli
+   !pip install -r requirements.txt
+   !pip install -e .
+   ```
+
+4. **Install NVIDIA Nsight Tools** (สำหรับ Colab):
+   ```bash
+   # Nsight Compute สำหรับ profiling
+   !wget https://developer.download.nvidia.com/devtools/nsight-compute/2026_1/Nsight_Compute_Linux_2026.1.1.97_39587526.deb
+   !dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
+
+   # Nsight Systems สำหรับ system profiling
+   !wget https://developer.download.nvidia.com/devtools/nsight-systems/2026_1/Nsight_Systems_Linux_2026.1.1.97_39587526.deb
+   !dpkg -i Nsight_Systems_Linux_2026.1.1.97_39587526.deb
+   ```
+
+5. **Initialize and verify**:
+   ```bash
+   !cudallm init
+   !cudallm doctor
+   ```
+
+6. **Download GGUF model for Tesla T4**:
+   ```bash
+   # ใช้ model ที่เหมาะกับ T4 (16GB VRAM)
+   !cudallm serve --port 8080 --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf --ngl 33
+   ```
+   *หมายเหตุ: `--ngl 33` เพื่อ offload 33 layers ไปยัง GPU T4*
+
+### Linux/macOS Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/ThemeHackers/cudallm-cli.git
+   cd cudallm-cli
+   ```
+
+2. **Create and activate virtual environment**:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **Install dependencies and package**:
+   ```bash
+   pip install -r requirements.txt
+   pip install -e .
+   ```
+
+4. **Initialize environment**:
+   ```bash
+   cudallm init
+   ```
+
+### Optional GPU Extras
+
+If you want the optional GPU extras, install them with:
 ```powershell
 pip install -e ".[gpu]"
 ```
@@ -229,6 +328,143 @@ Config parameters are persisted inside `config/config.json`. Below is the schema
 
 ## Troubleshooting
 
-* **Profiler Not Found Error**: If `ncu` or `nsys` show `Not Found`, run `cudallm init` to force a workspace path refresh after installing NVIDIA Nsight.
-* **Empty NSYS Timelines**: If `nsys` reports do not display GPU kernel profiles, run with `--profile-mode code` to enable programmatic compiler activation or instrument kernels with NVTX.
-* **Wildcard Bind Failures**: Ensure no other server instance binds to the specified port. Use `--reuse-port` on supporting host systems.
+### Windows-Specific Issues
+
+**PowerShell Execution Policy Error**
+```
+.venv\Scripts\activate : The term '.venv\Scripts\activate' is not recognized
+```
+**Solution**:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.venv\Scripts\activate
+```
+
+**NVCC Not Found in PATH**
+```
+'nvcc' is not recognized as an internal or external command
+```
+**Solution**:
+- Add CUDA Toolkit to PATH: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin`
+- Or run `cudallm init` to auto-detect NVCC path
+
+**CUDA Out of Memory**
+```
+CUDA_ERROR_OUT_OF_MEMORY
+```
+**Solution**:
+- Reduce batch size or model size
+- Use smaller GGUF quantization (Q4_K_M instead of Q8_0)
+- Close other GPU applications
+- Reduce `--ngl` parameter in `cudallm serve`
+
+**LLM Server Download Fails**
+```
+Failed to download model from HuggingFace
+```
+**Solution**:
+- Check internet connection
+- Use `--no-update` flag to skip auto-update
+- Manually download GGUF model and specify local path
+
+### Google Colab-Specific Issues (Tesla T4)
+
+**Nsight Tools Not Found**
+```
+ncu: command not found
+```
+**Solution**:
+```bash
+!wget https://developer.download.nvidia.com/devtools/nsight-compute/2026_1/Nsight_Compute_Linux_2026.1.1.97_39587526.deb
+!dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
+```
+
+**GPU Not Detected in Colab**
+```
+No CUDA-capable device is detected
+```
+**Solution**:
+- Go to Runtime → Change runtime type → Hardware accelerator → GPU
+- Select "T4" as GPU type
+- Restart runtime after changing settings
+
+**Model Too Large for T4 (16GB VRAM)**
+```
+CUDA_ERROR_OUT_OF_MEMORY on Tesla T4
+```
+**Solution**:
+- Use Q4_K_M quantization (recommended for T4)
+- Reduce `--ngl` to 20-25 layers
+- Use smaller model (7B instead of 13B)
+
+**Permission Denied on Installation**
+```
+Permission denied: '/usr/local/bin/ncu'
+```
+**Solution**:
+```bash
+!sudo dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
+```
+
+### General Issues
+
+**Profiler Not Found Error**
+If `ncu` or `nsys` show `Not Found`, run `cudallm init` to force a workspace path refresh after installing NVIDIA Nsight.
+
+**Empty NSYS Timelines**
+If `nsys` reports do not display GPU kernel profiles, run with `--profile-mode code` to enable programmatic compiler activation or instrument kernels with NVTX.
+
+**Wildcard Bind Failures**
+Ensure no other server instance binds to the specified port. Use `--reuse-port` on supporting host systems.
+
+**LLM Server Connection Refused**
+```
+Connection refused to http://localhost:8080/completion
+```
+**Solution**:
+- Verify LLM server is running: `cudallm serve --port 8080 ...`
+- Check firewall settings
+- Verify port is not in use: `netstat -ano | findstr :8080` (Windows) or `lsof -i :8080` (Linux)
+
+**Compilation Errors Not Healing**
+If the self-healing loop fails to fix compilation errors:
+- Check that `nvcc` is working independently
+- Verify CUDA version compatibility with your code
+- Try manual compilation first to isolate the issue
+- Check `config/config.json` for correct tool paths
+
+**Python Version Incompatibility**
+```
+SyntaxError or ImportError after installation
+```
+**Solution**:
+- Ensure Python 3.8 or later is installed
+- Recreate virtual environment with correct Python version
+- Update pip: `python -m pip install --upgrade pip`
+
+### Environment Verification Commands
+
+**Windows**:
+```powershell
+# Check all tools
+nvcc --version
+ncu --version
+nsys --version
+nvidia-smi
+python --version
+
+# Verify cudallm installation
+cudallm doctor
+cudallm init
+```
+
+**Google Colab**:
+```bash
+# Check GPU and CUDA
+!nvidia-smi
+!nvcc --version
+
+# Verify cudallm
+!cudallm doctor
+!cudallm init
+```
