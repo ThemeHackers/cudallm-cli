@@ -21,7 +21,19 @@ def numeric_columns(path, column=None):
     if not rows:
         return None
 
-    headers = rows[0]
+    header_idx = 0
+    for idx, r in enumerate(rows):
+        if not r:
+            continue
+        r_joined = ",".join(r)
+        if r_joined.startswith("#") or r_joined.startswith("##"):
+            continue
+        if any(k in [col.lower().strip() for col in r] for k in ["id", "kernel name", "kernel", "metric name", "metric value", "device", "process ID", "process name", "host name"]):
+            header_idx = idx
+            break
+
+    headers = rows[header_idx]
+    data_rows = rows[header_idx + 1:]
 
     idx = None
     if column is not None:
@@ -41,7 +53,7 @@ def numeric_columns(path, column=None):
 
     if idx is not None:
         values = []
-        for row in rows[1:]:
+        for row in data_rows:
             if idx < len(row):
                 try:
                     values.append(float(row[idx]))
@@ -60,7 +72,7 @@ def numeric_columns(path, column=None):
     candidates.sort(reverse=True)
     for _, i in candidates:
         values = []
-        for row in rows[1:]:
+        for row in data_rows:
             if i < len(row):
                 try:
                     values.append(float(row[i]))
@@ -69,7 +81,7 @@ def numeric_columns(path, column=None):
         if values:
             return (i, values)
 
-    for row in rows[1:20]:
+    for row in data_rows[:20]:
         for i, value in enumerate(row):
             try:
                 float(value)
@@ -77,7 +89,7 @@ def numeric_columns(path, column=None):
                 continue
 
             values = []
-            for candidate_row in rows[1:]:
+            for candidate_row in data_rows:
                 if i < len(candidate_row):
                     try:
                         values.append(float(candidate_row[i]))

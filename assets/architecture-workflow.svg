@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="980" viewBox="0 0 1400 980" role="img" aria-labelledby="title desc">
+  <title id="title">Closed-loop optimization and self-healing workflow</title>
+  <desc id="desc">A flowchart showing optimize, compile, verify, profile, and repeat steps for CUDA kernel improvement.</desc>
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .box { fill: #111827; stroke: #60a5fa; stroke-width: 3; rx: 18; ry: 18; }
+      .diamond { fill: #111827; stroke: #f59e0b; stroke-width: 3; }
+      .term { fill: #0b1220; stroke: #34d399; stroke-width: 3; rx: 24; ry: 24; }
+      .text { fill: #e5e7eb; font: 600 22px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+      .small { fill: #cbd5e1; font: 500 18px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+      .label { fill: #f8fafc; font: 700 20px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #93c5fd; stroke-width: 4; fill: none; marker-end: url(#arrowhead); }
+      .arrow-warn { stroke: #f59e0b; stroke-width: 4; fill: none; marker-end: url(#arrowhead-warn); }
+      .arrow-ok { stroke: #34d399; stroke-width: 4; fill: none; marker-end: url(#arrowhead-ok); }
+      .note { fill: #94a3b8; font: 500 16px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#93c5fd" />
+    </marker>
+    <marker id="arrowhead-warn" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f59e0b" />
+    </marker>
+    <marker id="arrowhead-ok" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="980" rx="28" ry="28" />
+  <text x="700" y="54" class="label">Architecture &amp; Workflow</text>
+  <text x="700" y="84" class="note">Closed-loop optimization and self-healing process</text>
+
+  <!-- Top row -->
+  <rect class="term" x="80" y="130" width="220" height="74" />
+  <text x="190" y="167" class="text">Start</text>
+  <text x="190" y="192" class="small">Start Optimization</text>
+
+  <rect class="box" x="350" y="130" width="250" height="74" rx="18" ry="18" />
+  <text x="475" y="160" class="text">LLM Generates</text>
+  <text x="475" y="186" class="small">Optimized Code</text>
+
+  <rect class="box" x="650" y="130" width="250" height="74" rx="18" ry="18" />
+  <text x="775" y="160" class="text">Save to</text>
+  <text x="775" y="186" class="small">temp_kernel.cu</text>
+
+  <rect class="diamond" x="980" y="116" width="170" height="102" transform="rotate(45 1065 167)" />
+  <text x="1065" y="150" class="text">Compile</text>
+  <text x="1065" y="174" class="small">with NVCC</text>
+
+  <rect class="box" x="1210" y="130" width="160" height="74" rx="18" ry="18" />
+  <text x="1290" y="160" class="text">Success</text>
+  <text x="1290" y="186" class="small">Verify</text>
+
+  <!-- Middle row -->
+  <rect class="box" x="930" y="320" width="250" height="82" rx="18" ry="18" />
+  <text x="1055" y="352" class="text">Create Healing</text>
+  <text x="1055" y="380" class="small">Prompt + Error Log</text>
+
+  <rect class="box" x="650" y="320" width="230" height="82" rx="18" ry="18" />
+  <text x="765" y="352" class="text">LLM Repairs</text>
+  <text x="765" y="380" class="small">Code</text>
+
+  <rect class="diamond" x="960" y="480" width="220" height="120" transform="rotate(45 1070 540)" />
+  <text x="1070" y="523" class="text">Verify</text>
+  <text x="1070" y="548" class="small">Mathematical Correctness</text>
+
+  <rect class="box" x="650" y="650" width="250" height="82" rx="18" ry="18" />
+  <text x="775" y="682" class="text">Profile Latency</text>
+  <text x="775" y="710" class="small">&amp; Metrics</text>
+
+  <rect class="diamond" x="920" y="650" width="250" height="120" transform="rotate(45 1045 710)" />
+  <text x="1045" y="692" class="text">Compare</text>
+  <text x="1045" y="718" class="small">New &lt; Best?</text>
+
+  <rect class="box" x="1230" y="650" width="130" height="82" rx="18" ry="18" />
+  <text x="1295" y="686" class="text">Update</text>
+  <text x="1295" y="713" class="small">Best</text>
+
+  <!-- Bottom row -->
+  <rect class="box" x="1230" y="820" width="130" height="82" rx="18" ry="18" />
+  <text x="1295" y="856" class="text">Loop</text>
+  <text x="1295" y="883" class="small">More Iterations?</text>
+
+  <rect class="box" x="650" y="820" width="250" height="82" rx="18" ry="18" />
+  <text x="775" y="856" class="text">Save Best Code</text>
+  <text x="775" y="883" class="small">to Output File</text>
+
+  <rect class="box" x="340" y="820" width="220" height="82" rx="18" ry="18" />
+  <text x="450" y="856" class="text">Clean Temp</text>
+  <text x="450" y="883" class="small">Files</text>
+
+  <rect class="term" x="80" y="820" width="180" height="82" rx="24" ry="24" />
+  <text x="170" y="856" class="text">End</text>
+  <text x="170" y="883" class="small">End Optimization</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M300 167 L350 167" />
+  <path class="arrow" d="M600 167 L650 167" />
+  <path class="arrow" d="M900 167 L970 167" />
+  <path class="arrow-warn" d="M1065 218 L1065 320" />
+  <path class="arrow" d="M1085 167 L1210 167" />
+  <path class="arrow-warn" d="M1055 402 L1070 480" />
+  <path class="arrow" d="M1040 540 L880 360" />
+  <path class="arrow-ok" d="M1070 600 L1070 650" />
+  <path class="arrow-ok" d="M1150 690 L1230 690" />
+  <path class="arrow" d="M1295 732 L1295 820" />
+  <path class="arrow" d="M1230 861 L900 861" />
+  <path class="arrow" d="M650 861 L560 861" />
+  <path class="arrow" d="M340 861 L260 861" />
+  <path class="arrow" d="M170 820 L170 214" />
+
+  <!-- Feedback loop labels -->
+  <text x="1110" y="300" class="note">Fail</text>
+  <text x="1130" y="470" class="note">Fail</text>
+  <text x="1185" y="655" class="note">Yes</text>
+  <text x="1200" y="804" class="note">No</text>
+  <text x="1180" y="834" class="note">Yes</text>
+  <text x="600" y="826" class="note">No</text>
+</svg>

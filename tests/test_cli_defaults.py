@@ -77,6 +77,22 @@ class CLIDefaultsTest(unittest.TestCase):
         self.assertFalse(c["llm_verify_tls"])
         self.assertTrue(c["llm_allow_insecure_remote"])
 
+    def test_apply_public_url_override_validates_endpoint(self):
+        from src.cli import apply_public_url_override
+
+        config = {
+            "llm_url": "http://127.0.0.1:8080/completion",
+            "llm_verify_tls": True,
+            "llm_allow_insecure_remote": False,
+        }
+
+        updated = apply_public_url_override(config.copy(), "http://192.168.1.10:8080/completion")
+        self.assertEqual(updated["llm_url"], "http://192.168.1.10:8080/completion")
+        self.assertFalse(updated["llm_verify_tls"])
+
+        with self.assertRaises(ValueError):
+            apply_public_url_override(config.copy(), "http://example.com:8080/completion")
+
     def test_check_and_update_llama_server_no_update_exists(self):
         from src.cli import check_and_update_llama_server
         import tempfile

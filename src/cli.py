@@ -12,6 +12,8 @@ from .discover import check_environment, discover_tool_paths, find_llm_server_pa
 from .sandbox import CUDASandbox
 from .llm_client import LLMClient
 from .profiler_tools import run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
+from .network_security import validate_llm_endpoint
+from . import platform_info
 import psutil
 try:
     import pynvml
@@ -31,10 +33,11 @@ from rich.spinner import Spinner
 
 console = Console()
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
+CONFIG_PATH = str(platform_info.get_config_path())
+_LEGACY_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
 
 DEFAULT_CONFIG = {
-    "llm_url": "http://127.0.0.1:8080/completion",
+    "llm_url": f"http://127.0.0.1:{platform_info.get_default_llm_port()}/completion",
     "llm_api_key": None,
     "llm_api_key_file": None,
     "llm_verify_tls": True,
@@ -66,31 +69,66 @@ def collect_cuda_files(input_path, recursive=True, exclude_dirs=None):
 def locate_and_setup_msvc():
     if sys.platform != "win32":
         return True
-        
 
-    if shutil.which("cl"):
+    if shutil.which("cl") and "INCLUDE" in os.environ:
         return True
-        
-   
+
+    bat_paths = [
+        "C:\\Program Files\\Microsoft Visual Studio\\*\\*\\VC\\Auxiliary\\Build\\vcvars64.bat",
+        "C:\\Program Files (x86)\\Microsoft Visual Studio\\*\\*\\VC\\Auxiliary\\Build\\vcvars64.bat"
+    ]
+    found_bats = []
+    for pattern in bat_paths:
+        found_bats.extend(glob.glob(pattern))
+
+    if found_bats:
+        found_bats.sort(reverse=True)
+        bat_path = found_bats[0]
+        cmd = f'call "{bat_path}" && set'
+        try:
+            res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    if "=" in line:
+                        key, val = line.split("=", 1)
+                        key_upper = key.upper()
+                        if key_upper in {"PATH", "INCLUDE", "LIB", "LIBPATH"}:
+                            os.environ[key_upper] = val
+                return True
+        except Exception:
+            pass
+
     search_paths = [
         "C:\\Program Files\\Microsoft Visual Studio\\*\\*\\VC\\Tools\\MSVC\\*\\bin\\Hostx64\\x64",
         "C:\\Program Files (x86)\\Microsoft Visual Studio\\*\\*\\VC\\Tools\\MSVC\\*\\bin\\Hostx64\\x64"
     ]
-    
     found_paths = []
     for pattern in search_paths:
         found_paths.extend(glob.glob(pattern))
-        
+
     if found_paths:
-       
         found_paths.sort(reverse=True)
         msvc_path = found_paths[0]
         os.environ["PATH"] = msvc_path + os.pathsep + os.environ["PATH"]
         return True
-        
-    return False
+
+    return shutil.which("cl") is not None
+
+def migrate_legacy_config():
+    """Copy project-relative config/config.json to ~/.cudallm/config.json if needed."""
+    if os.path.exists(CONFIG_PATH):
+        return
+    if os.path.exists(_LEGACY_CONFIG_PATH):
+        config_dir = os.path.dirname(CONFIG_PATH)
+        os.makedirs(config_dir, exist_ok=True)
+        try:
+            shutil.copy2(_LEGACY_CONFIG_PATH, CONFIG_PATH)
+        except Exception:
+            pass
+
 
 def load_config():
+    migrate_legacy_config()
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'r') as f:
             loaded = json.load(f)
@@ -103,6 +141,13 @@ def save_config(config_data):
         os.makedirs(config_dir, exist_ok=True)
     with open(CONFIG_PATH, 'w') as f:
         json.dump(config_data, f, indent=2)
+    try:
+        legacy_dir = os.path.dirname(_LEGACY_CONFIG_PATH)
+        if legacy_dir and os.path.isdir(legacy_dir):
+            with open(_LEGACY_CONFIG_PATH, 'w') as f:
+                json.dump(config_data, f, indent=2)
+    except Exception:
+        pass
 
 
 def apply_llm_overrides(config, llm_url=None, llm_api_key=None, llm_api_key_file=None, insecure=False):
@@ -116,6 +161,15 @@ def apply_llm_overrides(config, llm_url=None, llm_api_key=None, llm_api_key_file
         config['llm_api_key'] = None
     if insecure:
         config['llm_verify_tls'] = False
+        config['llm_allow_insecure_remote'] = True
+    return config
+
+
+def apply_public_url_override(config, public_url, allow_insecure_remote=False):
+    validated = validate_llm_endpoint(public_url, allow_insecure_remote=allow_insecure_remote)
+    config['llm_url'] = public_url
+    config['llm_verify_tls'] = validated['is_secure']
+    if allow_insecure_remote:
         config['llm_allow_insecure_remote'] = True
     return config
 
@@ -275,10 +329,19 @@ def render_environment_summary(title="Local CUDA Environment Status"):
         except Exception:
             llm_status = "Offline"
 
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    is_dev = os.path.exists(os.path.join(project_dir, '.git'))
+    install_mode = "Development (editable)" if is_dev else "Global (pip install)"
+
     table = Table(title=title, show_header=True, header_style="bold magenta")
     table.add_column("Property", style="cyan", width=25)
     table.add_column("Value", style="green")
 
+    table.add_row("Platform", platform_info.platform_display_name())
+    table.add_row("Install Mode", install_mode)
+    table.add_row("Config Location", CONFIG_PATH)
+    table.add_row("Cache Directory", str(platform_info.get_cache_dir()))
+    table.add_row("─" * 25, "─" * 40)
     table.add_row("NVCC Toolchain", "Found" if env_status.get("nvcc_found") else "[ERROR] Not Found")
     table.add_row("NVIDIA SMI", "Found" if env_status.get("nvidia_smi_found") else "[ERROR] Not Found")
     table.add_row("Nsight Compute (ncu)", "Found" if env_status.get("ncu_found") else "[WARNING] Not Found (Fallback to timer)")
@@ -370,6 +433,8 @@ cudallm serve --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf
         console.print(help_text)
 
 def optimize_single_file(input_file, output, iters, target, retries, fast_math, opt_level, report, llm, env_info, profile_mode='none', use_nvtx=False, ncu_metrics='', apply_nvtx=False):
+    import uuid
+    run_id = uuid.uuid4().hex[:8]
     with open(input_file, 'r') as f:
         original_code = f.read()
 
@@ -404,179 +469,183 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
         title="Local CUDA Optimization Agent"
     ))
 
-    for i in range(iters):
-        console.print(f"\n[bold cyan]Iteration {i+1}/{iters}[/bold cyan]")
+    try:
+        for i in range(iters):
+            console.print(f"\n[bold cyan]Iteration {i+1}/{iters}[/bold cyan]")
 
-        dashboard = IterationDashboard(i+1, iters)
-        with Live(dashboard, refresh_per_second=4) as live:
+            dashboard = IterationDashboard(i+1, iters)
+            with Live(dashboard, refresh_per_second=4) as live:
 
-            dashboard.update_status("Prompting local LLM for optimization...")
-            prompt = llm.create_optimization_prompt(current_code, env_info, target, best_time, flags)
+                dashboard.update_status("Prompting local LLM for optimization...")
+                prompt = llm.create_optimization_prompt(current_code, env_info, target, best_time, flags)
 
-            live.stop()
-            new_code, gen_time = llm.generate_code(prompt)
-            live.start()
+                live.stop()
+                new_code, gen_time = llm.generate_code(prompt)
+                live.start()
 
-            if not new_code:
-                dashboard.update_status("[ERROR] No CUDA code returned; skipping iteration.", "dots")
-                try:
-                    if os.path.exists("temp_kernel.cu"):
-                        os.remove("temp_kernel.cu")
-                except Exception:
-                    pass
-                time.sleep(1.0)
-                continue
+                if not new_code:
+                    dashboard.update_status("[ERROR] No CUDA code returned; skipping iteration.", "dots")
+                    try:
+                        t_file = f"temp_kernel_{run_id}.cu"
+                        if os.path.exists(t_file):
+                            os.remove(t_file)
+                    except Exception:
+                        pass
+                    time.sleep(1.0)
+                    continue
 
-            if not compile_enabled:
-                best_code = new_code
-                current_code = new_code
-                history.append({
-                    "iteration": i+1,
-                    "latency": None,
-                    "compile_success": False,
-                    "gen_time": gen_time
-                })
-                dashboard.update_status("Skipping compilation for header-only file.", "dots")
+                if not compile_enabled:
+                    best_code = new_code
+                    current_code = new_code
+                    history.append({
+                        "iteration": i+1,
+                        "latency": None,
+                        "compile_success": False,
+                        "gen_time": gen_time
+                    })
+                    dashboard.update_status("Skipping compilation for header-only file.", "dots")
+                    time.sleep(0.5)
+                    continue
+
+                dashboard.update_status("Saving temporary kernel...")
+                temp_file = f"temp_kernel_{run_id}.cu"
+                with open(temp_file, 'w') as f:
+                    f.write(new_code)
+
+                sandbox.file_path = temp_file
+
+                dashboard.update_status("Compiling generated CUDA code...")
+                compile_res = sandbox.compile()
+
+                verification_failed = False
+                prof_res = {"latency": float('inf'), "raw_output": ""}
+
+                if compile_res['success']:
+                    dashboard.update_status("Profiling & verifying mathematical correctness...")
+                    prof_res = sandbox.profile_latency()
+                    if "VERIFICATION FAILURE" in prof_res.get("raw_output", ""):
+                        verification_failed = True
+                        compile_res['success'] = False
+                        compile_res['error_log'] = prof_res["raw_output"]
+
+                heal_attempts = 0
+                while not compile_res['success'] and heal_attempts < retries:
+                    live.stop()
+                    if verification_failed:
+                        console.print("[bold red][ERROR] Mathematical Verification Failed! Output does not match original baseline.[/bold red]")
+                        console.print(Panel(compile_res['error_log'], title="[bold red][ERROR] Verification Error[/bold red]", border_style="red"))
+                    else:
+                        console.print(f"[bold yellow][WARNING] Compilation failed! Attempting self-healing ({heal_attempts+1}/{retries})...[/bold yellow]")
+                        console.print(Panel(Syntax(compile_res['error_log'], "text", theme="monokai"), title="[bold red][ERROR] NVCC Error Log[/bold red]", border_style="red"))
+                    live.start()
+
+                    dashboard.update_status(f"Healing CUDA code with LLM... ({heal_attempts+1}/{retries})")
+                    heal_prompt = llm.create_healing_prompt(new_code, compile_res['error_log'])
+
+                    live.stop()
+                    new_code, gen_time = llm.generate_code(heal_prompt)
+                    live.start()
+
+                    if new_code:
+                        with open(temp_file, 'w') as f:
+                            f.write(new_code)
+                        dashboard.update_status("Re-compiling healed CUDA code...")
+                        compile_res = sandbox.compile()
+                        if compile_res['success']:
+                            dashboard.update_status("Re-profiling & verifying healed CUDA code...")
+                            prof_res = sandbox.profile_latency()
+                            if "VERIFICATION FAILURE" in prof_res.get("raw_output", ""):
+                                verification_failed = True
+                                compile_res['success'] = False
+                                compile_res['error_log'] = prof_res["raw_output"]
+                            else:
+                                verification_failed = False
+                    heal_attempts += 1
+
+                if not compile_res['success']:
+                    live.stop()
+                    if verification_failed:
+                        console.print("[bold red][ERROR] Failed to mathematically verify the code after max attempts. Skipping iteration.[/bold red]")
+                    else:
+                        console.print("[bold red][ERROR] Failed to heal the code after max attempts. Skipping iteration.[/bold red]")
+                    console.print(Panel(compile_res['error_log'], title="[bold red][ERROR] Final Error Log[/bold red]", border_style="red"))
+                    continue
+
+                latency = prof_res["latency"]
+                dashboard.update_status("Code compiled and verified mathematically!", "dots")
                 time.sleep(0.5)
-                continue
 
-            dashboard.update_status("Saving temporary kernel...")
-            temp_file = "temp_kernel.cu"
-            with open(temp_file, 'w') as f:
-                f.write(new_code)
+            console.print("[bold green]Code compiled successfully![/bold green]")
+            console.print(f"[bold]Kernel Latency:[/bold] [bold yellow]{latency:.4f} ms[/bold yellow] (Gen Time: {gen_time:.2f}s, Profiler: {prof_res.get('raw_output', 'Fallback')})")
 
-            sandbox.file_path = temp_file
+            history.append({
+                "iteration": i+1,
+                "latency": latency,
+                "compile_success": True,
+                "gen_time": gen_time
+            })
 
-            dashboard.update_status("Compiling generated CUDA code...")
-            compile_res = sandbox.compile()
+            if latency < best_time:
+                best_time = latency
+                console.print("[bold green]New Best Latency Achieved! Modifying code...[/bold green]")
+                print_diff(best_code, new_code)
+                best_code = new_code
 
-            verification_failed = False
-            prof_res = {"latency": float('inf'), "raw_output": ""}
+            current_code = new_code
 
-            if compile_res['success']:
-                dashboard.update_status("Profiling & verifying mathematical correctness...")
-                prof_res = sandbox.profile_latency()
-                if "VERIFICATION FAILURE" in prof_res.get("raw_output", ""):
-                    verification_failed = True
-                    compile_res['success'] = False
-                    compile_res['error_log'] = prof_res["raw_output"]
+        output_dir = os.path.dirname(output)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        with open(output, 'w') as f:
+            f.write(best_code)
 
-            heal_attempts = 0
-            while not compile_res['success'] and heal_attempts < retries:
-                live.stop()
-                if verification_failed:
-                    console.print("[bold red][ERROR] Mathematical Verification Failed! Output does not match original baseline.[/bold red]")
-                    console.print(Panel(compile_res['error_log'], title="[bold red][ERROR] Verification Error[/bold red]", border_style="red"))
-                else:
-                    console.print(f"[bold yellow][WARNING] Compilation failed! Attempting self-healing ({heal_attempts+1}/{retries})...[/bold yellow]")
-                    console.print(Panel(Syntax(compile_res['error_log'], "text", theme="monokai"), title="[bold red][ERROR] NVCC Error Log[/bold red]", border_style="red"))
-                live.start()
+        if compile_enabled:
+            original_latency = history[0]['latency'] if history else "unknown"
+            console.print(Panel(
+                f"[bold green]Local Optimization Complete![/bold green]\n"
+                f"  [bold]Saved Optimized Kernel to:[/bold] {output}\n"
+                f"  [bold]Best Latency:[/bold] [bold yellow]{best_time:.4f} ms[/bold yellow] (Original was {original_latency} ms)\n"
+                f"  [bold]Total Generated Tokens:[/bold] {llm.total_tokens}",
+                border_style="bold green",
+                title="Optimization Summary"
+            ))
+        else:
+            console.print(Panel(
+                f"[bold green]Optimization Complete (Unverified)![/bold green]\n"
+                f"  [bold]Saved Optimized File to:[/bold] {output}\n"
+                f"  [bold]Total Generated Tokens:[/bold] {llm.total_tokens}",
+                border_style="bold yellow",
+                title="Optimization Summary"
+            ))
 
-                dashboard.update_status(f"Healing CUDA code with LLM... ({heal_attempts+1}/{retries})")
-                heal_prompt = llm.create_healing_prompt(new_code, compile_res['error_log'])
+        if report:
+            report_data = {
+                "timestamp": datetime.now().isoformat(),
+                "environment": env_info,
+                "flags": flags,
+                "best_latency": None if not compile_enabled else best_time,
+                "history": history
+            }
+            report_dir = os.path.dirname(output) or "."
+            report_file = os.path.join(report_dir, f"report_{os.path.basename(input_file)}.json")
+            save_report(report_data, report_file)
+            console.print(f"[bold blue][INFO] Detailed report saved to {report_file}[/bold blue]")
 
-                live.stop()
-                new_code, gen_time = llm.generate_code(heal_prompt)
-                live.start()
-
-                if new_code:
-                    with open(temp_file, 'w') as f:
-                        f.write(new_code)
-                    dashboard.update_status("Re-compiling healed CUDA code...")
-                    compile_res = sandbox.compile()
-                    if compile_res['success']:
-                        dashboard.update_status("Re-profiling & verifying healed CUDA code...")
-                        prof_res = sandbox.profile_latency()
-                        if "VERIFICATION FAILURE" in prof_res.get("raw_output", ""):
-                            verification_failed = True
-                            compile_res['success'] = False
-                            compile_res['error_log'] = prof_res["raw_output"]
-                        else:
-                            verification_failed = False
-                heal_attempts += 1
-
-            if not compile_res['success']:
-                live.stop()
-                if verification_failed:
-                    console.print("[bold red][ERROR] Failed to mathematically verify the code after max attempts. Skipping iteration.[/bold red]")
-                else:
-                    console.print("[bold red][ERROR] Failed to heal the code after max attempts. Skipping iteration.[/bold red]")
-                console.print(Panel(compile_res['error_log'], title="[bold red][ERROR] Final Error Log[/bold red]", border_style="red"))
-                continue
-
-            latency = prof_res["latency"]
-            dashboard.update_status("Code compiled and verified mathematically!", "dots")
-            time.sleep(0.5)
-
-        console.print("[bold green]Code compiled successfully![/bold green]")
-        console.print(f"[bold]Kernel Latency:[/bold] [bold yellow]{latency:.4f} ms[/bold yellow] (Gen Time: {gen_time:.2f}s, Profiler: {prof_res.get('raw_output', 'Fallback')})")
-
-        history.append({
-            "iteration": i+1,
-            "latency": latency,
-            "compile_success": True,
-            "gen_time": gen_time
-        })
-
-        if latency < best_time:
-            best_time = latency
-            console.print("[bold green]New Best Latency Achieved! Modifying code...[/bold green]")
-            print_diff(best_code, new_code)
-            best_code = new_code
-
-        current_code = new_code
-
-    output_dir = os.path.dirname(output)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-    with open(output, 'w') as f:
-        f.write(best_code)
-
-    for temp in ["temp_kernel.cu", "temp_cuda_kernel.exe", "temp_cuda_kernel.out", "temp_cuda_kernel.exp", "temp_cuda_kernel.lib"]:
-        if os.path.exists(temp):
+        return {
+            "input": input_file,
+            "output": output,
+            "compile_enabled": compile_enabled,
+            "best_latency": None if not compile_enabled else best_time
+        }
+    finally:
+        temp_file = f"temp_kernel_{run_id}.cu"
+        if os.path.exists(temp_file):
             try:
-                os.remove(temp)
+                os.remove(temp_file)
             except Exception:
                 pass
-
-    if compile_enabled:
-        original_latency = history[0]['latency'] if history else "unknown"
-        console.print(Panel(
-            f"[bold green]Local Optimization Complete![/bold green]\n"
-            f"  [bold]Saved Optimized Kernel to:[/bold] {output}\n"
-            f"  [bold]Best Latency:[/bold] [bold yellow]{best_time:.4f} ms[/bold yellow] (Original was {original_latency} ms)\n"
-            f"  [bold]Total Generated Tokens:[/bold] {llm.total_tokens}",
-            border_style="bold green",
-            title="Optimization Summary"
-        ))
-    else:
-        console.print(Panel(
-            f"[bold green]Optimization Complete (Unverified)![/bold green]\n"
-            f"  [bold]Saved Optimized File to:[/bold] {output}\n"
-            f"  [bold]Total Generated Tokens:[/bold] {llm.total_tokens}",
-            border_style="bold yellow",
-            title="Optimization Summary"
-        ))
-
-    if report:
-        report_data = {
-            "timestamp": datetime.now().isoformat(),
-            "environment": env_info,
-            "flags": flags,
-            "best_latency": None if not compile_enabled else best_time,
-            "history": history
-        }
-        report_dir = os.path.dirname(output) or "."
-        report_file = os.path.join(report_dir, f"report_{os.path.basename(input_file)}.json")
-        save_report(report_data, report_file)
-        console.print(f"[bold blue][INFO] Detailed report saved to {report_file}[/bold blue]")
-
-    return {
-        "input": input_file,
-        "output": output,
-        "compile_enabled": compile_enabled,
-        "best_latency": None if not compile_enabled else best_time
-    }
+        if sandbox:
+            sandbox.cleanup()
 
 @click.group()
 def main():
@@ -1176,9 +1245,7 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 
          
             new_exe_path = os.path.join(dest_dir, bin_name)
-            # Sometimes tar files extract into a subdirectory, let's find the binary in the extracted files if it's not direct
             if not os.path.exists(new_exe_path):
-                # Search for it recursively inside dest_dir
                 for root, dirs, files_list in os.walk(dest_dir):
                     if bin_name in files_list:
                         new_exe_path = os.path.join(root, bin_name)
@@ -1231,7 +1298,7 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 @click.option('--allow-unsafe-network', is_flag=True, help='Allow exposing the server without API key or TLS')
 @click.option('--reuse-port', is_flag=True, help='Allow multiple sockets to bind to the same port')
 @click.option('--repo', default='prithivMLmods/cudaLLM-8B-GGUF', help='HuggingFace repository name')
-@click.option('--file', default='cudaLLM-8B.Q4_K_M.gguf', help='HuggingFace GGUF model file name')
+@click.option('--file', default='cudaLLM-8B.Q2_K.gguf', help='HuggingFace GGUF model file name')
 @click.option('--ngl', default=33, help='Number of layers to offload to GPU')
 @click.option('--ctx', default=4096, help='Context size')
 @click.option('--parallel', default=1, help='Number of parallel request slots (slots)')
@@ -1244,13 +1311,27 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
     
    
     env = os.environ.copy()
-    torch_lib = os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib")
+    torch_lib = None
+    try:
+        import torch
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+    except ImportError:
+        candidate_paths = [
+            os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib"),
+            os.path.join(sys.prefix, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages", "torch", "lib"),
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                torch_lib = p
+                break
     
-    if os.path.exists(torch_lib):
+    if torch_lib and os.path.exists(torch_lib):
         console.print(f"[bold green][INFO] Found PyTorch CUDA runtime libraries at:[/bold green] {torch_lib}")
-        env["PATH"] = torch_lib + os.pathsep + env.get("PATH", "")
+        if os.name == 'nt':
+            env["PATH"] = torch_lib + os.pathsep + env.get("PATH", "")
+        else:
+            env["LD_LIBRARY_PATH"] = torch_lib + os.pathsep + env.get("LD_LIBRARY_PATH", "")
     else:
-
         console.print("[yellow][WARNING] PyTorch CUDA runtime libraries not found in active virtual environment. Falling back to system PATH.[/yellow]")
 
  
@@ -1269,7 +1350,11 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
         return
 
     if public_url:
-        config["llm_url"] = public_url
+        try:
+            apply_public_url_override(config, public_url, allow_insecure_remote=allow_unsafe_network)
+        except ValueError as exc:
+            console.print(f"[bold red][ERROR] Invalid public URL: {exc}[/bold red]")
+            return
     else:
         scheme = "https" if tls_enabled else "http"
         if host in {"0.0.0.0", "::"}:

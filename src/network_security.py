@@ -33,8 +33,7 @@ def is_private_network_host(host: str | None) -> bool:
     try:
         address = ipaddress.ip_address(normalized)
     except ValueError:
-       
-        return "." not in normalized
+        return False
 
     return address.is_private or address.is_loopback or address.is_link_local
 
@@ -71,8 +70,11 @@ def load_api_key(api_key: str | None = None, api_key_file: str | None = None) ->
         key_path = Path(api_key_file).expanduser()
         if not key_path.exists():
             raise FileNotFoundError(f"API key file not found: {key_path}")
-        key = key_path.read_text(encoding="utf-8").strip()
-        return key or None
+        for line in key_path.read_text(encoding="utf-8").splitlines():
+            key = line.strip()
+            if key:
+                return key
+        return None
 
     return None
 

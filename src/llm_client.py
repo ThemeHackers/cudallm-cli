@@ -72,11 +72,22 @@ class LLMClient:
         allow_insecure_remote=False,
     ):
         self.url = url
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(self.url)
+            if not parsed.path or parsed.path == '/':
+                if "ollama" in self.url.lower() or "11434" in self.url:
+                    self.url = self.url.rstrip('/') + '/api/generate'
+                else:
+                    self.url = self.url.rstrip('/') + '/completion'
+        except Exception:
+            pass
+
         self.total_tokens = 0
         self.max_stream_chunks = max_stream_chunks
         self.request_headers = build_auth_headers(api_key=api_key, api_key_file=api_key_file)
         self.verify_tls = verify_tls
-        self.endpoint_info = validate_llm_endpoint(url, allow_insecure_remote=allow_insecure_remote)
+        self.endpoint_info = validate_llm_endpoint(self.url, allow_insecure_remote=allow_insecure_remote)
         self._validate_url()
         
     def _is_ollama(self):
@@ -100,7 +111,7 @@ class LLMClient:
             return False
 
         markers = [
-            "__global__", "__device__", "__host__", "   include",
+            "__global__", "__device__", "__host__", "#include",
             "cudaMalloc", "cudaMemcpy", "dim3", "<<<", ">>>"
         ]
         if any(marker in snippet for marker in markers):
@@ -517,6 +528,17 @@ class LLMClient:
             "temperature": 0.0,
             "stream": False
         }
+        if self._is_ollama():
+            payload = {
+                "model": "codellama",
+                "prompt": system_prompt + "\n" + user_prompt,
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": max_tokens
+                },
+                "stream": False
+            }
+
         attempt = 0
         max_attempts = 3
         backoff = 1.0
@@ -533,8 +555,11 @@ class LLMClient:
 
                 try:
                     j = r.json()
-                    if isinstance(j, dict) and 'response' in j:
-                        return j['response']
+                    if isinstance(j, dict):
+                        if 'response' in j:
+                            return j['response']
+                        if 'content' in j:
+                            return j['content']
                 except Exception:
                     pass
                 return r.text

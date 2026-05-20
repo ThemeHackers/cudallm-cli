@@ -28,6 +28,15 @@ def main():
     print(" Google Colab CUDA LLM Server Setup & Diagnostics")
     print("="*60)
 
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(repo_root)
+
+    print("[INFO] Installing cudallm in editable mode...")
+    code, out, err = run_command("pip install -e .")
+    if code != 0:
+        print(f"[WARNING] Failed to install cudallm in editable mode: {err}")
+    else:
+        print("[SUCCESS] Installed cudallm in editable mode.")
 
     if is_port_open(8081):
         print("[INFO] Port 8081 is in use. Terminating existing process...")
@@ -50,7 +59,7 @@ def main():
         
        
         if not os.path.exists("/content/llama.cpp"):
-            code, out, err = run_command("git clone https://github.com/ggml-org/llama.cpp /content/llama.cpp")
+            code, out, err = run_command("git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp")
             if code != 0:
                 print(f"[ERROR] Failed to clone llama.cpp: {err}")
                 sys.exit(1)
@@ -63,7 +72,7 @@ def main():
             sys.exit(1)
 
 
-        code, out, err = run_command("cmake --build /content/llama.cpp/build --config Release -j$(nproc)")
+        code, out, err = run_command("cmake --build /content/llama.cpp/build --config Release --target llama-server -j$(nproc)")
         if code != 0:
             print(f"[ERROR] Build failed: {err}")
             sys.exit(1)

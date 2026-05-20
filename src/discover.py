@@ -16,6 +16,13 @@ def _normalize_ext(path):
     base, ext = os.path.splitext(path)
     return base + ext.lower()
 
+
+def _version_sort_key(path):
+    parts = re.findall(r"\d+", path)
+    if not parts:
+        return [0]
+    return [int(part) for part in parts]
+
 def find_nvcc_path():
 
     sys_path = shutil.which('nvcc')
@@ -43,8 +50,25 @@ def find_nvcc_path():
             pattern = os.path.join(root, "NVIDIA GPU Computing Toolkit", "CUDA", "v*", "bin", "nvcc.exe")
             matches.extend(glob.glob(pattern))
         if matches:
-            matches.sort(reverse=True)
+            def _cuda_version_key(path):
+                m = re.search(r'[\\/]CUDA[\\/]v([\d\.]+)', path, re.IGNORECASE)
+                if m:
+                    try:
+                        return [int(x) for x in m.group(1).split('.')]
+                    except ValueError:
+                        pass
+                return [0]
+            matches.sort(key=_cuda_version_key, reverse=True)
             return _normalize_ext(matches[0])
+    else:
+        candidates = [
+            "/usr/local/cuda/bin/nvcc",
+            "/usr/bin/nvcc",
+        ]
+        candidates.extend(glob.glob("/usr/local/cuda-*/bin/nvcc"))
+        found = _pick_first_existing(candidates)
+        if found:
+            return _normalize_ext(found)
     return None
 
 def find_nvidia_smi_path():
@@ -64,6 +88,14 @@ def find_nvidia_smi_path():
         found = _pick_first_existing(candidates)
         if found:
             return _normalize_ext(found)
+    else:
+        candidates = [
+            "/usr/bin/nvidia-smi",
+            "/usr/local/cuda/bin/nvidia-smi",
+        ]
+        found = _pick_first_existing(candidates)
+        if found:
+            return _normalize_ext(found)
     return None
 
 def find_ncu_path():
@@ -79,11 +111,36 @@ def find_ncu_path():
         for root in roots:
             if not os.path.exists(root):
                 continue
+            nsight_dirs = glob.glob(os.path.join(root, "Nsight Compute *"))
+            if nsight_dirs:
+                nsight_dirs.sort(reverse=True)
+                for nsight_dir in nsight_dirs:
+                    target_dirs = glob.glob(os.path.join(nsight_dir, "target", "*"))
+                    for target_dir in target_dirs:
+                        candidate = os.path.join(target_dir, "ncu.exe")
+                        if os.path.exists(candidate):
+                            return _normalize_ext(candidate)
             candidates = []
             candidates.extend(glob.glob(os.path.join(root, "Nsight Compute*", "target", "**", "ncu.exe"), recursive=True))
             candidates.extend(glob.glob(os.path.join(root, "**", "ncu.exe"), recursive=True))
             if candidates:
+                candidates.sort(key=_version_sort_key, reverse=True)
                 return _normalize_ext(candidates[0])
+    else:
+        roots = ["/usr/local", "/opt/nvidia"]
+        candidates = []
+        for root in roots:
+            if os.path.exists(root):
+                candidates.extend(glob.glob(os.path.join(root, "cuda*", "NsightCompute*", "target", "*", "ncu")))
+                candidates.extend(glob.glob(os.path.join(root, "NVIDIA-Nsight-Compute*", "target", "*", "ncu")))
+                candidates.extend(glob.glob(os.path.join(root, "nsight-compute*", "target", "*", "ncu")))
+        candidates.extend([
+            "/usr/local/cuda/bin/ncu",
+            "/usr/bin/ncu"
+        ])
+        found = _pick_first_existing(candidates)
+        if found:
+            return _normalize_ext(found)
     return None
 
 def find_nsys_path():
@@ -99,11 +156,36 @@ def find_nsys_path():
         for root in roots:
             if not os.path.exists(root):
                 continue
+            nsight_dirs = glob.glob(os.path.join(root, "Nsight Systems *"))
+            if nsight_dirs:
+                nsight_dirs.sort(reverse=True)
+                for nsight_dir in nsight_dirs:
+                    target_dirs = glob.glob(os.path.join(nsight_dir, "target", "*"))
+                    for target_dir in target_dirs:
+                        candidate = os.path.join(target_dir, "nsys.exe")
+                        if os.path.exists(candidate):
+                            return _normalize_ext(candidate)
             candidates = []
             candidates.extend(glob.glob(os.path.join(root, "Nsight Systems*", "target*", "**", "nsys.exe"), recursive=True))
             candidates.extend(glob.glob(os.path.join(root, "**", "nsys.exe"), recursive=True))
             if candidates:
+                candidates.sort(key=_version_sort_key, reverse=True)
                 return _normalize_ext(candidates[0])
+    else:
+        roots = ["/usr/local", "/opt/nvidia"]
+        candidates = []
+        for root in roots:
+            if os.path.exists(root):
+                candidates.extend(glob.glob(os.path.join(root, "cuda*", "nsight-systems*", "bin", "nsys")))
+                candidates.extend(glob.glob(os.path.join(root, "nsight-systems*", "bin", "nsys")))
+                candidates.extend(glob.glob(os.path.join(root, "nsys", "bin", "nsys")))
+        candidates.extend([
+            "/usr/local/cuda/bin/nsys",
+            "/usr/bin/nsys"
+        ])
+        found = _pick_first_existing(candidates)
+        if found:
+            return _normalize_ext(found)
     return None
 
 def find_llm_server_path(project_dir=None):
@@ -120,10 +202,25 @@ def find_llm_server_path(project_dir=None):
             os.path.join(project_dir, "**", f"llm-server{ext}"),
             os.path.join(project_dir, "**", f"llama-server{ext}"),
         ]
+        candidates = []
         for pattern in patterns:
             for candidate in glob.glob(pattern, recursive=True):
                 if os.path.exists(candidate):
-                    return _normalize_ext(candidate)
+                    candidates.append(candidate)
+        if candidates:
+            candidates.sort(key=_version_sort_key, reverse=True)
+            return _normalize_ext(candidates[0])
+
+    if os.name != 'nt':
+        candidates = [
+            "/content/llama.cpp/build/bin/llama-server",
+            "/content/llama.cpp/bin/llama-server",
+            "/usr/local/bin/llama-server",
+            "/usr/bin/llama-server",
+        ]
+        found = _pick_first_existing(candidates)
+        if found:
+            return _normalize_ext(found)
 
     return None
 
@@ -135,6 +232,58 @@ def discover_tool_paths(project_dir=None):
         'nsys_path': find_nsys_path(),
         'llm_server_path': find_llm_server_path(project_dir),
     }
+
+def find_cmake_path():
+    """Locate cmake binary for source builds (especially on Colab)."""
+    sys_path = shutil.which('cmake')
+    if sys_path:
+        return sys_path
+    candidates = [
+        "/usr/bin/cmake",
+        "/usr/local/bin/cmake",
+        "/snap/bin/cmake",
+    ]
+    return _pick_first_existing(candidates)
+
+
+def detect_cuda_version_from_toolkit():
+    """
+    Parse CUDA version from the toolkit's version.txt or version.json
+    without requiring nvidia-smi (useful on Colab where nvidia-smi may
+    report a different driver-level CUDA version).
+    """
+    search_roots = []
+    cuda_path = os.environ.get("CUDA_PATH") or os.environ.get("CUDA_HOME")
+    if cuda_path:
+        search_roots.append(cuda_path)
+    search_roots.extend(glob.glob("/usr/local/cuda-*"))
+    search_roots.append("/usr/local/cuda")
+
+    for root in search_roots:
+        version_file = os.path.join(root, "version.txt")
+        if os.path.isfile(version_file):
+            try:
+                with open(version_file) as f:
+                    match = re.search(r'(\d+\.\d+)', f.read())
+                    if match:
+                        return match.group(1)
+            except Exception:
+                pass
+        version_json = os.path.join(root, "version.json")
+        if os.path.isfile(version_json):
+            try:
+                import json
+                with open(version_json) as f:
+                    data = json.load(f)
+                    cuda_info = data.get("cuda", {})
+                    ver = cuda_info.get("version") or cuda_info.get("name", "")
+                    match = re.search(r'(\d+\.\d+)', str(ver))
+                    if match:
+                        return match.group(1)
+            except Exception:
+                pass
+    return None
+
 
 def check_environment():
     nvcc_path = find_nvcc_path()
@@ -165,6 +314,11 @@ def check_environment():
                 env_info['cuda_version'] = match.group(1)
         except Exception:
             pass
+
+    if env_info['cuda_version'] == 'Unknown':
+        toolkit_ver = detect_cuda_version_from_toolkit()
+        if toolkit_ver:
+            env_info['cuda_version'] = toolkit_ver
 
     if env_info['nvidia_smi_found']:
         try:

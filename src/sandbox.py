@@ -4,13 +4,15 @@ import re
 import shutil
 import time
 from datetime import datetime
-from src.discover import find_ncu_path, find_nsys_path
+from .discover import find_ncu_path, find_nsys_path
 
 class CUDASandbox:
     def __init__(self, file_path, flags=None, profile_mode='auto', use_nvtx=False, profile_metrics='', apply_nvtx_suggestion=False):
+        import uuid
+        self.run_id = uuid.uuid4().hex[:8]
         self.file_path = file_path
         self.original_file_path = file_path
-        self.exe_path = "./temp_cuda_kernel.exe" if os.name == 'nt' else "./temp_cuda_kernel.out"
+        self.exe_path = f"./temp_cuda_kernel_{self.run_id}.exe" if os.name == 'nt' else f"./temp_cuda_kernel_{self.run_id}.out"
         self.flags = flags or []
         self.profile_mode = profile_mode
         self.use_nvtx = use_nvtx
@@ -18,6 +20,24 @@ class CUDASandbox:
         self.apply_nvtx_suggestion = apply_nvtx_suggestion
         self.reference_checksums = {}
         self.has_custom_harness = False
+
+    def cleanup(self):
+        temp_files = [
+            self.exe_path,
+            self.exe_path.replace(".exe", ".exp") if os.name == 'nt' else "",
+            self.exe_path.replace(".exe", ".lib") if os.name == 'nt' else "",
+            f"./temp_consolidated_unit_{self.run_id}.cu",
+        ]
+        for pattern in [f"ncu_report_{self.run_id}*", f"nsys_report_{self.run_id}*"]:
+            import glob
+            temp_files.extend(glob.glob(pattern))
+
+        for tf in temp_files:
+            if tf and os.path.exists(tf):
+                try:
+                    os.remove(tf)
+                except Exception:
+                    pass
 
     def _generate_harness(self, code):
         has_dft = "dft_kernel" in code
@@ -41,6 +61,7 @@ class CUDASandbox:
         harness_code = f"""
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <cuda_runtime.h>
 #include <math.h>
 
@@ -66,21 +87,35 @@ void init_rand_float(float* arr, int n) {{
 int main(int argc, char** argv) {{
     // Check if we are running in verification mode
     bool verify = false;
+    bool enable_profiler = false;
+    bool have_reference = false;
     float ref_dft = 0.0f;
     float ref_fft = 0.0f;
     float ref_vision = 0.0f;
     int ref_pattern = 0;
 
     if (argc >= 2) {{
-        verify = true;
         // Parse expected checksums passed as arguments
         for (int i = 1; i < argc; i++) {{
-            sscanf(argv[i], "--ref_dft=%f", &ref_dft);
-            sscanf(argv[i], "--ref_fft=%f", &ref_fft);
-            sscanf(argv[i], "--ref_vision=%f", &ref_vision);
-            sscanf(argv[i], "--ref_pattern=%d", &ref_pattern);
+            if (strcmp(argv[i], "--profiler=on") == 0) {{
+                enable_profiler = true;
+            }}
+            if (sscanf(argv[i], "--ref_dft=%f", &ref_dft) == 1) {{
+                have_reference = true;
+            }}
+            if (sscanf(argv[i], "--ref_fft=%f", &ref_fft) == 1) {{
+                have_reference = true;
+            }}
+            if (sscanf(argv[i], "--ref_vision=%f", &ref_vision) == 1) {{
+                have_reference = true;
+            }}
+            if (sscanf(argv[i], "--ref_pattern=%d", &ref_pattern) == 1) {{
+                have_reference = true;
+            }}
         }}
     }}
+
+    verify = have_reference;
 
     srand(42); // Pin seed for reproducibility
     float total_latency_ms = 0.0f;
@@ -343,6 +378,25 @@ int main(int argc, char** argv) {{
 """
         return harness_code
 
+    def _collect_reference_checksums(self):
+        try:
+            run_res = subprocess.run([self.exe_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except Exception as exc:
+            return f"Could not collect reference checksums: {exc}"
+
+        if run_res.returncode != 0:
+            stderr = run_res.stderr.strip() if run_res.stderr else ""
+            stdout = run_res.stdout.strip() if run_res.stdout else ""
+            details = stderr or stdout or f"exit code {run_res.returncode}"
+            return f"Could not collect reference checksums: harness execution failed ({details})"
+
+        stdout = run_res.stdout
+        for key in ["dft", "fft", "vision", "pattern"]:
+            match = re.search(f"{key.upper()}_CHECKSUM:\\s*([\\d\\.-]+)", stdout)
+            if match:
+                self.reference_checksums[key] = match.group(1)
+        return None
+
     def compile(self):
         try:
             with open(self.file_path, "r") as f:
@@ -355,7 +409,7 @@ int main(int argc, char** argv) {{
         target_file = self.file_path
         if self.has_custom_harness:
             harness_code = self._generate_harness(code_content)
-            temp_compile_file = "./temp_consolidated_unit.cu"
+            temp_compile_file = f"./temp_consolidated_unit_{self.run_id}.cu"
             
             with open(temp_compile_file, "w") as f:
             
@@ -372,7 +426,7 @@ int main(int argc, char** argv) {{
 
             target_file = temp_compile_file
 
-        from src.discover import find_nvcc_path
+        from .discover import find_nvcc_path
         nvcc_bin = find_nvcc_path() or "nvcc"
         src_dir = os.path.dirname(os.path.abspath(self.original_file_path or self.file_path))
         
@@ -427,25 +481,21 @@ int main(int argc, char** argv) {{
                     error_log += "\n"
                 error_log += result.stdout.strip()
             
-            if self.has_custom_harness and os.path.exists("./temp_consolidated_unit.cu"):
+            temp_compile_file = f"./temp_consolidated_unit_{self.run_id}.cu"
+            if self.has_custom_harness and os.path.exists(temp_compile_file):
                 try:
-                    os.remove("./temp_consolidated_unit.cu")
+                    os.remove(temp_compile_file)
                 except Exception:
                     pass
 
             success = result.returncode == 0
             
             if success and self.has_custom_harness and not self.reference_checksums:
-                try:
-                    run_res = subprocess.run([self.exe_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                    if run_res.returncode == 0:
-                        stdout = run_res.stdout
-                        for key in ["dft", "fft", "vision", "pattern"]:
-                            match = re.search(f"{key.upper()}_CHECKSUM:\\s*([\\d\\.-]+)", stdout)
-                            if match:
-                                self.reference_checksums[key] = match.group(1)
-                except Exception:
-                    pass
+                warning = self._collect_reference_checksums()
+                if warning:
+                    if error_log:
+                        error_log += "\n"
+                    error_log += f"WARNING: {warning}"
 
             return {"success": success, "error_log": error_log}
         except FileNotFoundError:
@@ -501,7 +551,7 @@ int main(int argc, char** argv) {{
             kind, binpath = profiler
             if kind == 'ncu':
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                base = f"ncu_report_{ts}"
+                base = f"ncu_report_{self.run_id}_{ts}"
                 csv_file = f"{base}.csv"
                 cmd = [binpath]
                 if self.profile_metrics:
@@ -515,15 +565,37 @@ int main(int argc, char** argv) {{
                     cmd2 = [binpath, self.exe_path] + args
                     result = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     output = result.stdout + result.stderr
+
+                rep_path = f"{base}.ncu-rep"
+                if os.path.exists(rep_path):
+                    export_cmd = [binpath, '--import', rep_path, '--csv']
+                    try:
+                        exp_res = subprocess.run(export_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+                        if exp_res.returncode == 0 and exp_res.stdout.strip():
+                            with open(csv_file, 'w', encoding='utf-8') as f:
+                                f.write(exp_res.stdout)
+                    except Exception:
+                        pass
+
                 if os.path.exists(csv_file):
                     try:
                         with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
                             out_text = f.read()[:500]
                     except Exception:
                         out_text = ''
-                    return {"latency": 99999.0, "raw_output": out_text, "ncu_csv": os.path.abspath(csv_file)}
+                    latency = 99999.0
+                    try:
+                        from .profiler_tools import parse_ncu_csv_for_hotspot
+                        hotspot = parse_ncu_csv_for_hotspot(csv_file)
+                        if hotspot and hotspot.get("value") is not None:
+                            latency = float(hotspot["value"])
+                    except Exception:
+                        pass
+                    return {"latency": latency, "raw_output": out_text, "ncu_csv": os.path.abspath(csv_file)}
+                else:
+                    return {"latency": 99999.0, "raw_output": f"NCU profiling failed to generate CSV report. Output logs:\n{output[:500]}"}
 
-            cmd = [binpath, 'profile', '--output', 'nsys_report', '--trace', 'cuda']
+            cmd = [binpath, 'profile', '--output', f'nsys_report_{self.run_id}', '--trace', 'cuda']
             if self.profile_mode == 'code':
                 cmd.extend(['--capture-range=cudaProfilerApi'])
             cmd.append(self.exe_path)
@@ -539,6 +611,13 @@ int main(int argc, char** argv) {{
                     output = result.stdout + result.stderr
                 except Exception as e:
                     output = f"nsys invocation failed: {e}"
+
+            match = re.search(r'TOTAL_LATENCY:\s*([\d\.]+)\s*(ms|us)?', output, re.IGNORECASE)
+            if match:
+                latency = float(match.group(1))
+                if match.group(2) == 'us':
+                    latency /= 1000.0
+                return {"latency": latency, "raw_output": output[:500]}
 
             match = re.search(r'([\d\.]+)\s*(ms|us)', output)
             if match:

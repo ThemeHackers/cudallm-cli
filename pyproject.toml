@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cudallm-cli"
+version = "0.2.0"
+description = "Local Autonomous CUDA Optimization Agent — automated LLM-driven CUDA kernel optimization, profiling, and self-healing."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "click",
+    "requests",
+    "rich",
+    "psutil",
+    "nvidia-ml-py",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "torch",
+    "torchvision",
+]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+cudallm = "src.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["src*", "tools*"]

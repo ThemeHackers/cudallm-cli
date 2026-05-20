@@ -6,7 +6,7 @@ from datetime import datetime
 def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
     nsys = None
     try:
-        from src.discover import find_nsys_path
+        from .discover import find_nsys_path
         nsys = find_nsys_path()
     except Exception:
         pass
@@ -21,7 +21,7 @@ def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
     return {"out": out, "basename": output_base}
 
 def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
-    from src.discover import find_ncu_path
+    from .discover import find_ncu_path
     ncu = find_ncu_path()
     if not ncu:
         return {"error": "ncu not found"}
@@ -33,6 +33,18 @@ def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     out = res.stdout + res.stderr
     csv_path = f"{base}.csv"
+    rep_path = f"{base}.ncu-rep"
+
+    if os.path.exists(rep_path):
+        export_cmd = [ncu, '--import', rep_path, '--csv']
+        try:
+            exp_res = subprocess.run(export_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+            if exp_res.returncode == 0 and exp_res.stdout.strip():
+                with open(csv_path, 'w', encoding='utf-8') as f:
+                    f.write(exp_res.stdout)
+        except Exception:
+            pass
+
     return {"out": out, "csv": csv_path, "basename": base}
 
 def parse_ncu_csv_for_hotspot(csv_path):
@@ -42,9 +54,22 @@ def parse_ncu_csv_for_hotspot(csv_path):
         with open(csv_path, newline='', encoding='utf-8', errors='ignore') as f:
             reader = csv.reader(f)
             rows = list(reader)
-            if not rows or len(rows) < 2:
+            if not rows:
                 return None
-            headers = [h.strip() for h in rows[0]]
+            header_idx = 0
+            for idx, r in enumerate(rows):
+                if not r:
+                    continue
+                r_joined = ",".join(r)
+                if r_joined.startswith("#") or r_joined.startswith("##"):
+                    continue
+                if any(k in [col.lower().strip() for col in r] for k in ["id", "kernel name", "kernel", "metric name", "metric value", "device", "process ID", "process name", "host name"]):
+                    header_idx = idx
+                    break
+            if header_idx >= len(rows):
+                return None
+            headers = [h.strip() for h in rows[header_idx]]
+            data_rows = rows[header_idx + 1:]
          
             name_idx = None
             for i, h in enumerate(headers):
@@ -59,10 +84,10 @@ def parse_ncu_csv_for_hotspot(csv_path):
                     time_idx = i
                     break
           
-            if time_idx is None:
+            if time_idx is None and data_rows:
                 for i in range(len(headers)):
                     try:
-                        float(rows[1][i])
+                        float(data_rows[0][i])
                         time_idx = i
                         break
                     except Exception:
@@ -71,7 +96,7 @@ def parse_ncu_csv_for_hotspot(csv_path):
                 return None
             best = None
             best_val = -1.0
-            for r in rows[1:]:
+            for r in data_rows:
                 if len(r) <= max(name_idx, time_idx):
                     continue
                 name = r[name_idx]

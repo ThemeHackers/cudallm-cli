@@ -44,28 +44,7 @@ Local Autonomous CUDA Optimization Agent — A closed-loop tool that uses a loca
 
 The diagram below illustrates the closed-loop optimization and self-healing process:
 
-```mermaid
-graph TD
-    Start([Start Optimization]) --> LLMPrompt[LLM Generates Optimized Code]
-    LLMPrompt --> SaveTemp[Save to temp_kernel.cu]
-    SaveTemp --> Compile{Compile with NVCC}
-    Compile -- Fail --> HealPrompt[Create Healing Prompt with NVCC Error Log]
-    HealPrompt --> LLMHeal[LLM Repairs Code]
-    LLMHeal --> SaveTemp
-    Compile -- Success --> Verify{Verify Mathematical Correctness}
-    Verify -- Fail --> VerifyHeal[Create Verification Failure Log]
-    VerifyHeal --> LLMHeal
-    Verify -- Success --> Profile[Profile Latency & Metrics]
-    Profile --> Compare{New Latency < Best Latency?}
-    Compare -- Yes --> UpdateBest[Update Best Code & Latency]
-    Compare -- No --> LoopCheck{More Iterations?}
-    UpdateBest --> LoopCheck
-    LoopCheck -- Yes --> NextIter[Next Iteration]
-    NextIter --> LLMPrompt
-    LoopCheck -- No --> SaveFinal[Save Best Code to Output File]
-    SaveFinal --> Clean[Clean Temp Files]
-    Clean --> End([End Optimization])
-```
+![Closed-loop optimization and self-healing workflow](assets/architecture-workflow.svg)
 
 ---
 
@@ -103,6 +82,11 @@ source .venv/bin/activate
 3. Install the package in editable mode:
 ```powershell
 pip install -e .
+```
+
+  If you want the optional GPU extras, install them with:
+```powershell
+pip install -e ".[gpu]"
 ```
 
 ---
