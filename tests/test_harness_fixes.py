@@ -11,10 +11,13 @@ from tools.compare_ncu import numeric_columns
 
 
 class TestHarnessFixes(unittest.TestCase):
+    @patch("src.discover.os.name", "nt")
     @patch("src.discover.glob.glob")
     @patch("src.discover.os.environ.get")
+    @patch("src.discover.shutil.which")
     @patch("src.discover._pick_first_existing")
-    def test_cuda_version_sorting(self, mock_pick, mock_env_get, mock_glob):
+    def test_cuda_version_sorting(self, mock_pick, mock_which, mock_env_get, mock_glob):
+        mock_which.return_value = None
         mock_pick.return_value = None
         mock_env_get.side_effect = lambda key, default=None: default
 

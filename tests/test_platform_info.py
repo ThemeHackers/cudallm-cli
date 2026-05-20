@@ -5,7 +5,6 @@ Every public function is exercised across multiple code-paths by mocking
 ``os.name``, environment variables, and filesystem operations.
 """
 
-import pytest
 from unittest.mock import patch, mock_open, MagicMock
 from pathlib import Path
 
