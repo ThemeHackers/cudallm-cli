@@ -18,8 +18,7 @@ def detect_cuda_version():
         print("[WARNING] Could not run nvidia-smi, assuming CUDA 12.1")
         return "121"
 
-    # Parse CUDA version from nvidia-smi output
-    # Example: "CUDA Version: 12.2"
+ 
     match = re.search(r'CUDA Version:\s*(\d+)\.(\d+)', smi_output)
     if match:
         major = match.group(1)
@@ -93,7 +92,7 @@ def ensure_python_dependencies(repo_root):
     else:
         print("[WARNING] requirements.txt not found; skipping dependency install.")
 
-    # Detect CUDA version and select appropriate wheel
+
     cuda_version = detect_cuda_version()
 
     print(f"[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels for CUDA {cuda_version}...")
@@ -104,15 +103,15 @@ def ensure_python_dependencies(repo_root):
     code, _, err = run_command(cuda_llama_cmd)
 
     if code != 0:
-        print(f"[WARNING] Pre-built wheel for cu{cuda_version} failed, trying cu124 as fallback...")
+        print(f"[WARNING] Pre-built wheel for cu{cuda_version} failed, trying cu126 as fallback...")
         cuda_llama_cmd = (
             f'{sys.executable} -m pip install llama-cpp-python '
-            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124'
+            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126'
         )
         code, _, err = run_command(cuda_llama_cmd)
 
     if code != 0:
-        print(f"[WARNING] Pre-built wheel for cu124 failed, trying cu121 as fallback...")
+        print(f"[WARNING] Pre-built wheel for cu126 failed, trying cu121 as fallback...")
         cuda_llama_cmd = (
             f'{sys.executable} -m pip install llama-cpp-python '
             f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121'
@@ -132,7 +131,7 @@ def ensure_python_dependencies(repo_root):
         print(f"[ERROR] Failed to install CUDA-enabled llama-cpp-python: {err}")
         sys.exit(1)
 
-    # Verify CUDA is actually enabled
+   
     cuda_enabled = verify_cuda_enabled()
     if not cuda_enabled:
         print("[WARNING] CUDA support verification failed. The model may run on CPU, which will be very slow.")
