@@ -41,14 +41,14 @@ def ensure_python_dependencies(repo_root):
         print("[WARNING] requirements.txt not found; skipping dependency install.")
 
     print("[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels (much faster)...")
-    # Try pre-built wheels first (much faster than compiling from source)
+  
     cuda_llama_cmd = (
         f'{sys.executable} -m pip install llama-cpp-python '
         f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124'
     )
     code, _, err = run_command(cuda_llama_cmd)
 
-    # Fallback to compile if pre-built wheel fails
+   
     if code != 0:
         print("[WARNING] Pre-built wheel installation failed, falling back to compile from source...")
         print("[INFO] This may take 10-20 minutes, please be patient...")
