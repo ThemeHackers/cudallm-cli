@@ -22,6 +22,10 @@ dependencies = [
     "rich",
     "psutil",
     "nvidia-ml-py",
+    "fastapi",
+    "uvicorn",
+    "llama-cpp-python",
+    "huggingface_hub",
 ]
 
 [project.optional-dependencies]

@@ -14,7 +14,7 @@ Usage (Colab):
   pip install transformers accelerate bitsandbytes safetensors[torch]
 
 Run:
-  python tools/server.py --hf-repo prithivMLmods/cudaLLM-8B-GGUF --hf-file cudaLLM-8B.Q4_K_M.gguf --host 127.0.0.1 --port 8081 --use-cuda
+    python tools/server.py --hf-repo prithivMLmods/cudaLLM-8B-GGUF --hf-file cudaLLM-8B.Q2_K.gguf --host 127.0.0.1 --port 8081 --use-cuda
 
 Endpoints:
 - GET /health
@@ -38,7 +38,7 @@ ENGINE = None
 
 @asynccontextmanager
 async def lifespan(app):
-    # Model is initialized in run_server(); keep lifespan for future startup/shutdown hooks.
+   
     yield
 
 
@@ -74,7 +74,8 @@ class LLMWrapper:
     def _init_backend(self):
         wants_gguf = bool((self.hf_file and self.hf_file.lower().endswith('.gguf')) or (self.model_path and str(self.model_path).lower().endswith('.gguf')))
 
-        # Try llama-cpp-python first (works with GGUF + llama.cpp)
+    
+
         llama_cpp = try_import('llama_cpp')
         if llama_cpp is not None:
             try:
@@ -83,7 +84,7 @@ class LLMWrapper:
                 self.backend = 'llama_cpp'
 
                 model_arg = self.model_path
-                # If GGUF is provided as HF repo/file, download to local cache first.
+             
                 if not model_arg and self.hf_repo and self.hf_file:
                     hub = try_import('huggingface_hub')
                     if hub is None:
@@ -92,7 +93,7 @@ class LLMWrapper:
                     print(f'[INFO] Downloading GGUF from HF: repo={self.hf_repo} file={self.hf_file}')
                     model_arg = hf_hub_download(repo_id=self.hf_repo, filename=self.hf_file)
 
-                # If --hf-file is a local path, accept it directly.
+              
                 if not model_arg and self.hf_file and os.path.exists(self.hf_file):
                     model_arg = self.hf_file
 
@@ -114,7 +115,7 @@ class LLMWrapper:
                 'Install llama-cpp-python (and huggingface_hub for --hf-repo/--hf-file).'
             )
 
-        # Fallback to transformers pipeline
+      
         transformers = try_import('transformers')
         torch = try_import('torch')
         if transformers is None or torch is None:
@@ -128,11 +129,11 @@ class LLMWrapper:
             if not model_id:
                 raise RuntimeError('No model id/path provided for transformers backend')
 
-            # Attempt to load model onto GPU if requested
+          
             device_map = 'auto' if self.use_cuda else None
             kwargs = {}
             if self.use_cuda:
-                # prefer fp16 to reduce memory
+            
                 kwargs['dtype'] = getattr(torch, 'float16', None)
 
             print(f'[INFO] Loading model {model_id} (this may take a while)')
@@ -148,15 +149,15 @@ class LLMWrapper:
 
     def generate(self, prompt: str, max_tokens: int = 128) -> str:
         if self.backend == 'llama_cpp':
-            # llama-cpp-python supports calling instance directly
+            
             try:
                 out = self.model(prompt, max_tokens=max_tokens)
-                # output format varies; attempt to extract
+
                 if isinstance(out, dict) and 'choices' in out:
                     return out['choices'][0]['text']
                 if isinstance(out, str):
                     return out
-                # fallback
+    
                 return str(out)
             except Exception as e:
                 raise RuntimeError('llama-cpp generation error: ' + str(e))
@@ -165,7 +166,7 @@ class LLMWrapper:
                 res = self.pipeline(prompt, max_new_tokens=max_tokens, do_sample=False)
                 if isinstance(res, list) and 'generated_text' in res[0]:
                     return res[0]['generated_text']
-                # Some pipelines return 'generated_text' or similar
+              
                 return str(res)
             except Exception as e:
                 raise RuntimeError('transformers generation error: ' + str(e))
@@ -190,7 +191,7 @@ def completion(req: CompletionRequest):
 
 
 def run_server(args):
-    # Initialize model synchronously before starting the webserver to avoid race
+  
     global MODEL
     MODEL = LLMWrapper(model_path=args.local_model, hf_repo=args.hf_repo, hf_file=args.hf_file, use_cuda=args.use_cuda)
     import uvicorn

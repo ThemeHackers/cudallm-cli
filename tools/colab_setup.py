@@ -26,7 +26,6 @@ def ensure_python_dependencies(repo_root):
     else:
         print("[WARNING] requirements.txt not found; skipping dependency install.")
 
-    # Sanity-check imports required by tools/server.py
     check_cmd = (
         f"{sys.executable} -c \""
         "import fastapi,uvicorn,huggingface_hub; "
@@ -102,7 +101,7 @@ def main():
 
     server_py_path = os.path.join(repo_root, "tools", "server.py")
     model_repo = "prithivMLmods/cudaLLM-8B-GGUF"
-    model_file = "cudaLLM-8B.Q4_K_M.gguf"
+    model_file = "cudaLLM-8B.Q2_K.gguf"
 
     if not os.path.exists(server_py_path):
         print(f"[ERROR] Python backend not found: {server_py_path}")
