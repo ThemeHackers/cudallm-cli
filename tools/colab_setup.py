@@ -34,7 +34,7 @@ def detect_cuda_version():
 def verify_cuda_enabled():
     """Verify that llama-cpp-python has CUDA support enabled."""
     print("[INFO] Verifying CUDA support in llama-cpp-python...")
-    check_cmd = f"{sys.executable} -c \"import llama_cpp; print('llama_cpp_version:', llama_cpp.__version__); print('CUDA supported:', hasattr(llama_cpp, 'llama_cpp_cuda')); import llama_cpp.llama_cpp_cuda as cuda; print('CUDA module loaded successfully')\""
+    check_cmd = f"{sys.executable} -c \"import llama_cpp; print('llama_cpp_version:', llama_cpp.__version__); print('CUDA supported:', hasattr(llama_cpp, 'llama_cpp_cuda')); print('CUDA module loaded successfully' if hasattr(llama_cpp, 'llama_cpp_cuda') else 'CUDA module not available')\""
     code, stdout, _ = run_command(check_cmd)
     if code != 0:
         print("[WARNING] CUDA module import failed, but this may be expected for CPU-only builds")
@@ -44,7 +44,7 @@ def verify_cuda_enabled():
     print("[INFO] CUDA verification output:")
     print(stdout)
 
-    if "CUDA module loaded successfully" in stdout:
+    if "CUDA supported: True" in stdout:
         print("[SUCCESS] CUDA support is properly enabled!")
         return True
     else:
@@ -86,37 +86,47 @@ def ensure_python_dependencies(repo_root):
 
     cuda_version = detect_cuda_version()
 
-    print(f"[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels for CUDA {cuda_version}...")
-    cuda_llama_cmd = (
-        f'{sys.executable} -m pip install llama-cpp-python '
-        f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu{cuda_version}'
-    )
-    code, _, err = run_command(cuda_llama_cmd)
-
-    if code != 0:
-        print(f"[WARNING] Pre-built wheel for cu{cuda_version} failed, trying cu126 as fallback...")
-        cuda_llama_cmd = (
-            f'{sys.executable} -m pip install llama-cpp-python '
-            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126'
-        )
-        code, _, err = run_command(cuda_llama_cmd)
-
-    if code != 0:
-        print(f"[WARNING] Pre-built wheel for cu126 failed, trying cu121 as fallback...")
-        cuda_llama_cmd = (
-            f'{sys.executable} -m pip install llama-cpp-python '
-            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121'
-        )
-        code, _, err = run_command(cuda_llama_cmd)
-
-    if code != 0:
-        print("[WARNING] All pre-built wheels failed, falling back to compile from source...")
+  
+    if int(cuda_version) >= 130:
+        print(f"[INFO] CUDA {cuda_version} is very new. Building llama-cpp-python from source for best compatibility...")
         print("[INFO] This may take 10-20 minutes, please be patient...")
         cuda_llama_cmd = (
-            f'FORCE_CMAKE=1 CMAKE_ARGS="-DGGML_CUDA=on" '
-            f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python'
+            f'CMAKE_ARGS="-DGGML_CUDA=on" '
+            f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary :all: llama-cpp-python'
         )
         code, _, err = run_command(cuda_llama_cmd)
+    else:
+        print(f"[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels for CUDA {cuda_version}...")
+        cuda_llama_cmd = (
+            f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
+            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu{cuda_version}'
+        )
+        code, _, err = run_command(cuda_llama_cmd)
+
+        if code != 0:
+            print(f"[WARNING] Pre-built wheel for cu{cuda_version} failed, trying cu126 as fallback...")
+            cuda_llama_cmd = (
+                f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
+                f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126'
+            )
+            code, _, err = run_command(cuda_llama_cmd)
+
+        if code != 0:
+            print(f"[WARNING] Pre-built wheel for cu126 failed, trying cu121 as fallback...")
+            cuda_llama_cmd = (
+                f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
+                f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121'
+            )
+            code, _, err = run_command(cuda_llama_cmd)
+
+        if code != 0:
+            print("[WARNING] All pre-built wheels failed, falling back to compile from source...")
+            print("[INFO] This may take 10-20 minutes, please be patient...")
+            cuda_llama_cmd = (
+                f'CMAKE_ARGS="-DGGML_CUDA=on" '
+                f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary :all: llama-cpp-python'
+            )
+            code, _, err = run_command(cuda_llama_cmd)
 
     if code != 0:
         print(f"[ERROR] Failed to install CUDA-enabled llama-cpp-python: {err}")
