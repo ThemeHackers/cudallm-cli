@@ -93,26 +93,24 @@ class CLIDefaultsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_public_url_override(config.copy(), "http://example.com:8080/completion")
 
-    def test_check_and_update_llama_server_no_update_exists(self):
-        from src.cli import check_and_update_llama_server
+    def test_check_and_prepare_python_server_uses_existing_script(self):
+        from src.cli import check_and_prepare_python_server
         import tempfile
         import os
 
-    
         with tempfile.TemporaryDirectory() as tmpdir:
-            server_bin = os.path.join(tmpdir, "llama-b9222-bin-win-cuda-12.4-x64", "llama-server.exe")
+            server_bin = os.path.join(tmpdir, "tools", "server.py")
             os.makedirs(os.path.dirname(server_bin), exist_ok=True)
-            with open(server_bin, "w") as f:
+            with open(server_bin, "w", encoding="utf-8") as f:
                 f.write("dummy")
 
             config = {
-                "llm_server_path": server_bin,
-                "llama_version": "b9222"
+                "llm_server_path": server_bin
             }
 
-         
-            path = check_and_update_llama_server(tmpdir, config, no_update=True)
+            path = check_and_prepare_python_server(tmpdir, config)
             self.assertEqual(path, server_bin)
+            self.assertNotIn("llama_version", config)
 
 
 if __name__ == "__main__":

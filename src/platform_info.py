@@ -84,7 +84,7 @@ def get_config_path() -> Path:
 
 
 def get_cache_dir() -> Path:
-    """Return the directory used for cached downloads (llama-server, etc.)."""
+    """Return the directory used for cached downloads (models, backend assets, etc.)."""
     return get_config_dir() / "cache"
 
 

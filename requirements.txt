@@ -3,6 +3,9 @@ requests
 rich
 psutil
 nvidia-ml-py
+fastapi 
+uvicorn 
+llama-cpp-python
 
 # GPU extras (optional) — install via: pip install -e ".[gpu]"
 # --extra-index-url https://download.pytorch.org/whl/cu130

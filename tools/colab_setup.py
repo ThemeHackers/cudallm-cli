@@ -13,7 +13,7 @@ def run_command(cmd, shell=True, timeout=None):
     try:
         res = subprocess.run(cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
         if res.returncode != 0:
-            # Show a concise failure summary to help debugging
+          
             out_tail = (res.stdout or "")[-2000:]
             err_tail = (res.stderr or "")[-2000:]
             print("[COMMAND FAILED] return code:", res.returncode)
@@ -52,7 +52,7 @@ def main():
 
     if is_port_open(8081):
         print("[INFO] Port 8081 is in use. Attempting to terminate existing process...")
-        # Use available tools if present
+
         if shutil.which("fuser"):
             run_command("fuser -k 8081/tcp")
             time.sleep(2)
@@ -66,75 +66,28 @@ def main():
     else:
         print("[SUCCESS] Port 8081 is free.")
 
-
-    cuda_server_path = "/content/llama.cpp/build/bin/llama-server"
-    if not os.path.exists(cuda_server_path):
-        print("[INFO] Compiled llama-server with CUDA not found. Compiling now...")
-        
-       
-        if not os.path.exists("/content/llama.cpp"):
-            # Retry a few times in case of transient network failures
-            retries = 3
-            for attempt in range(1, retries + 1):
-                code, out, err = run_command("git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp")
-                if code == 0:
-                    break
-                print(f"[WARNING] git clone failed (attempt {attempt}/{retries}). Retrying...")
-                time.sleep(2 * attempt)
-            if code != 0:
-                print(f"[ERROR] Failed to clone llama.cpp after {retries} attempts: {err}")
-                sys.exit(1)
-
-      
-        os.makedirs("/content/llama.cpp/build", exist_ok=True)
-
-        # Quick check for nvcc availability; warn but continue
-        if not shutil.which("nvcc"):
-            print("[WARNING] 'nvcc' not found in PATH. Ensure CUDA toolkit is installed; the build may still succeed if system compilers/linkers handle it.")
-
-        code, out, err = run_command("cmake -B /content/llama.cpp/build -S /content/llama.cpp -DGGML_CUDA=ON")
-        if code != 0:
-            print(f"[ERROR] CMake configuration failed. See output above for details.")
-            sys.exit(1)
-
-        # Determine number of parallel jobs
-        def get_make_jobs():
-            try:
-                env = os.environ.get("MAKE_JOBS")
-                if env:
-                    return int(env)
-            except Exception:
-                pass
-            n = os.cpu_count() or 2
-            return min(max(1, n), 16)
-
-        jobs = get_make_jobs()
-        build_cmd = f"cmake --build /content/llama.cpp/build --config Release --target llama-server -j{jobs}"
-        code, out, err = run_command(build_cmd)
-        if code != 0:
-            print(f"[ERROR] Build failed. Showing last 2000 chars of output for diagnosis:")
-            combined = (out or "") + "\n" + (err or "")
-            print(combined[-2000:])
-            sys.exit(1)
-
-    if os.path.exists(cuda_server_path):
-        print(f"[SUCCESS] CUDA-enabled llama-server found at: {cuda_server_path}")
-    else:
-        print("[ERROR] Failed to locate or compile CUDA-enabled llama-server.")
-        sys.exit(1)
-
- 
+    server_py_path = os.path.join(repo_root, "tools", "server.py")
     model_repo = "prithivMLmods/cudaLLM-8B-GGUF"
     model_file = "cudaLLM-8B.Q4_K_M.gguf"
-    
-    server_cmd = (
-        f"nohup {cuda_server_path} "
-        f"--hf-repo {model_repo} "
-        f"--hf-file {model_file} "
-        f"-ngl 33 -c 4096 --host 127.0.0.1 --port 8081 --parallel 1 > /content/server_colab.log 2>&1 &"
-    )
-    print("[INFO] Launching llama-server with CUDA GPU acceleration in background...")
-    subprocess.Popen(server_cmd, shell=True)
+
+    if not os.path.exists(server_py_path):
+        print(f"[ERROR] Python backend not found: {server_py_path}")
+        sys.exit(1)
+
+    print(f"[INFO] Found Python server at {server_py_path}. Launching with CUDA option...")
+    py_cmd = shlex.join([
+        sys.executable,
+        server_py_path,
+        "--hf-repo", model_repo,
+        "--hf-file", model_file,
+        "--host", "127.0.0.1",
+        "--port", "8081",
+        "--use-cuda",
+    ])
+    log_path = "/content/server_colab.log"
+    with open(log_path, "a") as _:
+        pass
+    subprocess.Popen(f"nohup {py_cmd} > {log_path} 2>&1 &", shell=True)
 
 
     print("[INFO] Waiting for server initialization and model download/loading...")
@@ -153,7 +106,12 @@ def main():
                 print("[ERROR] Server encountered an HTTP server error.")
                 print(log_content[-1000:])
                 sys.exit(1)
-            if "server is listening on" in log_content or "model loaded" in log_content:
+            if (
+                "server is listening on" in log_content
+                or "model loaded" in log_content
+                or "Uvicorn running on" in log_content
+                or "Application startup complete" in log_content
+            ):
                 server_ready = True
                 break
         
@@ -175,10 +133,10 @@ def main():
     print("="*60)
     print(smi_out)
     
-    if "llama-server" in smi_out:
-        print("\n[SUCCESS] Confirmed: llama-server is running on the GPU!")
+    if "python" in smi_out.lower() or "server.py" in smi_out.lower():
+        print("\n[SUCCESS] Confirmed: Python LLM backend is running on the GPU!")
     else:
-        print("\n[WARNING] llama-server process was not explicitly found in nvidia-smi processes table. Please check if VRAM usage is non-zero.")
+        print("\n[WARNING] Python backend process was not explicitly found in nvidia-smi processes table. Please check if VRAM usage is non-zero.")
 
     print("\nSetup finished successfully. You can now run:")
     print("!cudallm optimize examples/vector_add.cu --llm-url http://127.0.0.1:8081/completion --iters 1")

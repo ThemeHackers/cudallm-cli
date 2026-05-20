@@ -188,41 +188,29 @@ def find_nsys_path():
             return _normalize_ext(found)
     return None
 
-def find_llm_server_path(project_dir=None):
-    for tool_name in ('llm-server', 'llama-server'):
-        sys_path = shutil.which(tool_name)
-        if sys_path:
-            return _normalize_ext(sys_path)
-
+def find_llm_backend_path(project_dir=None):
+    candidates = []
     if project_dir and os.path.exists(project_dir):
-        ext = ".exe" if os.name == 'nt' else ""
-        patterns = [
-            os.path.join(project_dir, "llm-b*", f"llm-server{ext}"),
-            os.path.join(project_dir, "llama-b*", f"llama-server{ext}"),
-            os.path.join(project_dir, "**", f"llm-server{ext}"),
-            os.path.join(project_dir, "**", f"llama-server{ext}"),
-        ]
-        candidates = []
-        for pattern in patterns:
-            for candidate in glob.glob(pattern, recursive=True):
-                if os.path.exists(candidate):
-                    candidates.append(candidate)
-        if candidates:
-            candidates.sort(key=_version_sort_key, reverse=True)
-            return _normalize_ext(candidates[0])
+        candidates.extend([
+            os.path.join(project_dir, "tools", "server.py"),
+            os.path.join(project_dir, "server.py"),
+        ])
 
     if os.name != 'nt':
-        candidates = [
-            "/content/llama.cpp/build/bin/llama-server",
-            "/content/llama.cpp/bin/llama-server",
-            "/usr/local/bin/llama-server",
-            "/usr/bin/llama-server",
-        ]
-        found = _pick_first_existing(candidates)
-        if found:
-            return _normalize_ext(found)
+        candidates.extend([
+            "/content/server.py",
+            "/content/cudallm-cli/tools/server.py",
+        ])
 
+    found = _pick_first_existing(candidates)
+    if found:
+        return _normalize_ext(found)
     return None
+
+
+def find_llm_server_path(project_dir=None):
+    """Backward-compatible wrapper for older callers/config keys."""
+    return find_llm_backend_path(project_dir)
 
 def discover_tool_paths(project_dir=None):
     return {
@@ -230,7 +218,7 @@ def discover_tool_paths(project_dir=None):
         'nvidia_smi_path': find_nvidia_smi_path(),
         'ncu_path': find_ncu_path(),
         'nsys_path': find_nsys_path(),
-        'llm_server_path': find_llm_server_path(project_dir),
+        'llm_server_path': find_llm_backend_path(project_dir),
     }
 
 def find_cmake_path():

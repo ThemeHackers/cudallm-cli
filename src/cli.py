@@ -8,7 +8,7 @@ import glob
 import time
 import shutil
 from datetime import datetime
-from .discover import check_environment, discover_tool_paths, find_llm_server_path, find_ncu_path, find_nsys_path
+from .discover import check_environment, discover_tool_paths, find_llm_backend_path, find_ncu_path, find_nsys_path
 from .sandbox import CUDASandbox
 from .llm_client import LLMClient
 from .profiler_tools import run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
@@ -195,8 +195,7 @@ def refresh_config_paths(project_dir=None):
         "nvidia-smi",
         "ncu",
         "nsys",
-        "llm-server",
-        "llama-server",
+        "server.py",
     }
 
     changed = False
@@ -356,7 +355,7 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     table.add_row("NVIDIA SMI Path", str(env_status.get("nvidia_smi_path", "N/A")))
     table.add_row("Nsight Compute Path", str(env_status.get("ncu_path", "N/A")))
     table.add_row("Nsight Systems Path", str(env_status.get("nsys_path", "N/A")))
-    table.add_row("LLM Server Path", str(config.get("llm_server_path", "N/A")))
+    table.add_row("LLM Backend Script", str(config.get("llm_server_path", "N/A")))
 
     console.print(table)
 
@@ -378,7 +377,7 @@ cudallm check
     Alias for doctor.
 
 cudallm serve [options]
-    Launch llama-server with CUDA GPU offloading. Supports LAN bind host, API-key auth, and optional TLS.
+    Launch Python LLM backend (`tools/server.py`) with CUDA support.
 
 cudallm optimize <file|folder> [options]
     Run the optimization loop: prompt the LLM, compile, profile, verify, and heal.
@@ -419,7 +418,7 @@ serve:
     --api-key-file   Path to a file with API keys for server auth.
     --ssl-key-file   PEM private key for HTTPS.
     --ssl-cert-file  PEM certificate for HTTPS.
-    --no-update      Disable checking for updates of llama-server.
+    --no-update      Deprecated (retained for backward compatibility).
 
 Examples
 --------
@@ -1108,190 +1107,31 @@ def audit(input_file, markdown, recursive, llm_url, llm_api_key, llm_api_key_fil
     else:
         console.print("\n[bold green][INFO] Architectural Audit complete![/bold green]")
 
-def check_and_update_llama_server(project_dir, config, no_update=False):
-    import re
-    import urllib.request
-    import requests
-    import zipfile
+def check_and_prepare_python_server(project_dir, config):
+    server_path = config.get("llm_server_path")
+    if server_path and (not os.path.exists(server_path) or not str(server_path).lower().endswith(".py")):
+        server_path = None
 
+    if not server_path:
+        server_path = find_llm_backend_path(project_dir)
 
-    exe_path = config.get("llm_server_path")
-    if exe_path and not os.path.exists(exe_path):
-        exe_path = None
+    if not server_path:
+        expected = os.path.join(project_dir, "tools", "server.py")
+        raise click.ClickException(
+            f"Python LLM backend not found. Expected `{expected}`. "
+            "Create or restore `tools/server.py` and retry."
+        )
 
-    if not exe_path:
-        exe_path = find_llm_server_path(project_dir)
-
-    current_tag = None
-    if exe_path:
-
-        match = re.search(r'llama-(b\d+)-bin', exe_path)
-        if match:
-            current_tag = match.group(1)
-        else:
-            current_tag = config.get("llama_version")
-
- 
-    latest_tag = None
-    if not no_update:
-        console.print("[cyan]Checking for llama-server updates from GitHub...[/cyan]")
-        try:
-          
-            req = urllib.request.Request(
-                "https://github.com/ggml-org/llama.cpp/releases/latest",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            )
-            with urllib.request.urlopen(req, timeout=3) as response:
-                final_url = response.geturl()
-                parts = final_url.split('/')
-                tag = parts[-1]
-                if tag.startswith('b') and tag[1:].isdigit():
-                    latest_tag = tag
-        except Exception:
-
-            try:
-                req = urllib.request.Request(
-                    "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                )
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    data = json.loads(response.read().decode('utf-8'))
-                    tag = data.get('tag_name')
-                    if tag and tag.startswith('b') and tag[1:].isdigit():
-                        latest_tag = tag
-            except Exception:
-                pass
-
-  
-    def parse_version_num(t):
-        if t and t.startswith('b'):
-            try:
-                return int(t[1:])
-            except ValueError:
-                pass
-        return 0
-
-    fallback_tag = "b9222"
-    tag_to_download = latest_tag or fallback_tag
-
-    current_num = parse_version_num(current_tag)
-    latest_num = parse_version_num(latest_tag)
-
-    should_download = False
-    reason = ""
-
-    if not exe_path:
-        should_download = True
-        reason = "llama-server is not found locally."
-    elif latest_tag and latest_num > current_num:
-        should_download = True
-        reason = f"A new version {latest_tag} is available (Current: {current_tag or 'unknown'})."
-
-    if should_download:
-        console.print(Panel(f"[yellow]{reason}[/yellow]\n[cyan]Starting download and extraction for version {tag_to_download}...[/cyan]", title="Update System"))
-        
-     
-        if os.name == 'nt':
-            from .discover import check_environment
-            env_status = check_environment()
-            cuda_ver_str = env_status.get("cuda_version", "12.4")
-            try:
-                cuda_ver = float(cuda_ver_str.split()[0])
-            except (ValueError, IndexError):
-                cuda_ver = 12.4
-
-            if cuda_ver >= 13.0:
-                suffix = "bin-win-cuda-13.1-x64"
-            else:
-                suffix = "bin-win-cuda-12.4-x64"
-            ext = ".zip"
-            bin_name = "llama-server.exe"
-        else:
-            suffix = "bin-ubuntu-x64"
-            ext = ".tar.gz"
-            bin_name = "llama-server"
-
-        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag_to_download}/llama-{tag_to_download}-{suffix}{ext}"
-        dest_dir = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}")
-        archive_filepath = os.path.join(project_dir, f"llama-{tag_to_download}-{suffix}{ext}")
-
-        try:
-            response = requests.get(url, stream=True, timeout=15)
-            if response.status_code != 200:
-                raise Exception(f"HTTP Status {response.status_code}")
-
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with click.progressbar(length=total_size, label=f'Downloading {tag_to_download}') as bar:
-                with open(archive_filepath, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            bar.update(len(chunk))
-
-            console.print("[green]Download complete. Extracting files...[/green]")
-            os.makedirs(dest_dir, exist_ok=True)
-            if ext == ".zip":
-                with zipfile.ZipFile(archive_filepath, 'r') as zip_ref:
-                    zip_ref.extractall(dest_dir)
-            else:
-                import tarfile
-                with tarfile.open(archive_filepath, 'r:gz') as tar_ref:
-                    tar_ref.extractall(dest_dir)
-
-    
-            if os.path.exists(archive_filepath):
-                os.remove(archive_filepath)
-
-         
-            new_exe_path = os.path.join(dest_dir, bin_name)
-            if not os.path.exists(new_exe_path):
-                for root, dirs, files_list in os.walk(dest_dir):
-                    if bin_name in files_list:
-                        new_exe_path = os.path.join(root, bin_name)
-                        break
-
-            if os.path.exists(new_exe_path):
-                if os.name != 'nt':
-                    try:
-                        os.chmod(new_exe_path, 0o755)
-                    except Exception:
-                        pass
-                config["llm_server_path"] = new_exe_path
-                config["llama_version"] = tag_to_download
-                save_config(config)
-                console.print(f"[bold green]Successfully updated to llama-server version {tag_to_download}![/bold green]")
-                exe_path = new_exe_path
-            else:
-                raise Exception(f"{bin_name} not found in the extracted files.")
-
-        except Exception as e:
-       
-            if os.path.exists(archive_filepath):
-                try:
-                    os.remove(archive_filepath)
-                except Exception:
-                    pass
-            
-            console.print(f"[bold red][ERROR] Failed to download/update llama-server: {e}[/bold red]")
-            if exe_path:
-                console.print("[yellow]Falling back to current local llama-server.[/yellow]")
-            else:
-                console.print("[bold red]Please manually download llama-server and set it up.[/bold red]")
-                sys.exit(1)
-    else:
-        if current_tag:
-            console.print(f"[green]llama-server is up to date (Version: {current_tag}).[/green]")
-        else:
-            console.print("[green]llama-server is already installed.[/green]")
-
-    return exe_path
+    config["llm_server_path"] = server_path
+    config.pop("llama_version", None)
+    save_config(config)
+    return server_path
 
 @main.command()
 @click.option('--port', default=8080, help='Port to run the LLM server on')
-@click.option('--host', default='127.0.0.1', help='Host/interface for llama-server to bind to')
+@click.option('--host', default='127.0.0.1', help='Host/interface for Python backend to bind to')
 @click.option('--public-url', default=None, help='Reachable URL to store in config for clients on this network')
-@click.option('--api-key', default=None, help='API key to require for server access (sent to llama-server directly)')
+@click.option('--api-key', default=None, help='API key to require for server access (stored in config for client requests)')
 @click.option('--api-key-file', default=None, type=click.Path(exists=True, dir_okay=False), help='Path to a file containing one or more API keys')
 @click.option('--ssl-key-file', default=None, type=click.Path(exists=True, dir_okay=False), help='PEM-encoded SSL private key for HTTPS')
 @click.option('--ssl-cert-file', default=None, type=click.Path(exists=True, dir_okay=False), help='PEM-encoded SSL certificate for HTTPS')
@@ -1299,52 +1139,32 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 @click.option('--reuse-port', is_flag=True, help='Allow multiple sockets to bind to the same port')
 @click.option('--repo', default='prithivMLmods/cudaLLM-8B-GGUF', help='HuggingFace repository name')
 @click.option('--file', default='cudaLLM-8B.Q2_K.gguf', help='HuggingFace GGUF model file name')
-@click.option('--ngl', default=33, help='Number of layers to offload to GPU')
-@click.option('--ctx', default=4096, help='Context size')
-@click.option('--parallel', default=1, help='Number of parallel request slots (slots)')
-@click.option('--no-update', is_flag=True, help='Disable checking for updates of llama-server')
-def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, ngl, ctx, parallel, no_update):
+@click.option('--local-model', default=None, help='Local model path (GGUF or HF local directory)')
+@click.option('--use-cuda/--no-use-cuda', default=True, help='Enable CUDA for the Python backend')
+@click.option('--ngl', default=33, help='Deprecated. Kept for compatibility; ignored by Python backend')
+@click.option('--ctx', default=4096, help='Deprecated. Kept for compatibility; ignored by Python backend')
+@click.option('--parallel', default=1, help='Deprecated. Kept for compatibility; ignored by Python backend')
+@click.option('--no-update', is_flag=True, help='Deprecated. Kept for compatibility; ignored by Python backend')
+def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, local_model, use_cuda, ngl, ctx, parallel, no_update):
     """
-    Launch the local llama-server with CUDA support and auto-dependency resolution.
+    Launch the local Python LLM backend (`tools/server.py`) with CUDA support.
     """
-    console.print(Panel("[bold green]Launching Local LLM Server with CUDA Support[/bold green]", border_style="green"))
+    console.print(Panel("[bold green]Launching Local Python LLM Backend with CUDA Support[/bold green]", border_style="green"))
     
    
     env = os.environ.copy()
-    torch_lib = None
-    try:
-        import torch
-        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
-    except ImportError:
-        candidate_paths = [
-            os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib"),
-            os.path.join(sys.prefix, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages", "torch", "lib"),
-        ]
-        for p in candidate_paths:
-            if os.path.exists(p):
-                torch_lib = p
-                break
-    
-    if torch_lib and os.path.exists(torch_lib):
-        console.print(f"[bold green][INFO] Found PyTorch CUDA runtime libraries at:[/bold green] {torch_lib}")
-        if os.name == 'nt':
-            env["PATH"] = torch_lib + os.pathsep + env.get("PATH", "")
-        else:
-            env["LD_LIBRARY_PATH"] = torch_lib + os.pathsep + env.get("LD_LIBRARY_PATH", "")
-    else:
-        console.print("[yellow][WARNING] PyTorch CUDA runtime libraries not found in active virtual environment. Falling back to system PATH.[/yellow]")
 
  
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config = refresh_config_paths(project_dir)
-    exe_path = check_and_update_llama_server(project_dir, config, no_update)
+    server_path = check_and_prepare_python_server(project_dir, config)
 
     api_keys_enabled = bool(api_key or api_key_file)
     tls_enabled = bool(ssl_key_file and ssl_cert_file)
     exposed_bind = host not in {"127.0.0.1", "localhost", "::1"}
     if exposed_bind and not (api_keys_enabled or tls_enabled or allow_unsafe_network):
         console.print(
-            "[bold red][ERROR] Refusing to expose llama-server on a network-facing host without API key or TLS.[/bold red]"
+            "[bold red][ERROR] Refusing to expose the server on a network-facing host without API key or TLS.[/bold red]"
         )
         console.print("Use --api-key or --api-key-file, add --ssl-key-file and --ssl-cert-file, or pass --allow-unsafe-network to override.")
         return
@@ -1370,36 +1190,21 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
     save_config(config)
 
 
-    if repo == "prithivMLmods/cudaLLM-8B-GGUF":
-        spaced_files = {
-            "cudaLLM-8B.Q2_K.gguf",
-            "cudaLLM-8B.Q4_K_M.gguf",
-            "cudaLLM-8B.Q5_K_M.gguf",
-            "cudaLLM-8B.Q8_0.gguf"
-        }
-        stripped_file = file.strip()
-        if stripped_file in spaced_files:
-            file = " " + stripped_file
+    if any([no_update, ngl != 33, ctx != 4096, parallel != 1, reuse_port, api_key, api_key_file, ssl_key_file, ssl_cert_file]):
+        console.print("[yellow][WARNING] Some options are deprecated or not enforced by the Python backend and will be ignored by the process launch.[/yellow]")
 
     cmd = [
-        exe_path,
-        "--hf-repo", repo,
-        "--hf-file", file,
-        "-ngl", str(ngl),
-        "-c", str(ctx),
+        sys.executable,
+        server_path,
         "--host", host,
         "--port", str(port),
-        "--parallel", str(parallel),
     ]
-
-    if reuse_port:
-        cmd.append("--reuse-port")
-    if api_key:
-        cmd.extend(["--api-key", api_key])
-    if api_key_file:
-        cmd.extend(["--api-key-file", api_key_file])
-    if ssl_key_file and ssl_cert_file:
-        cmd.extend(["--ssl-key-file", ssl_key_file, "--ssl-cert-file", ssl_cert_file])
+    if local_model:
+        cmd.extend(["--local-model", local_model])
+    else:
+        cmd.extend(["--hf-repo", repo, "--hf-file", file])
+    if use_cuda:
+        cmd.append("--use-cuda")
     
     console.print(f"[bold blue][INFO] Running command:[/bold blue] {' '.join(cmd)}")
     console.print("[bold yellow]Press Ctrl+C to terminate the server.[/bold yellow]\n")
@@ -1420,7 +1225,7 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
             line_str = line.strip()
             if "error" in line_str.lower() or "failed" in line_str.lower():
                 console.print(f"[red]{line_str}[/red]")
-            elif "cuda" in line_str.lower() or "offload" in line_str.lower() or "device" in line_str.lower():
+            elif "cuda" in line_str.lower() or "gpu" in line_str.lower() or "device" in line_str.lower():
                 console.print(f"[bold green]{line_str}[/bold green]")
             elif "listening" in line_str.lower() or "model loaded" in line_str.lower():
                 console.print(f"[bold cyan]{line_str}[/bold cyan]")
@@ -1435,7 +1240,7 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
             process.wait()
         console.print("[bold green][INFO] LLM server stopped cleanly.[/bold green]")
     except Exception as e:
-        console.print(f"[bold red][ERROR] Failed to run llama-server: {e}[/bold red]")
+        console.print(f"[bold red][ERROR] Failed to run Python LLM backend: {e}[/bold red]")
 
 if __name__ == '__main__':
     main()
