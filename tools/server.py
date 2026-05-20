@@ -87,16 +87,51 @@ def resolve_hf_filename(repo_id: str, requested_filename: str) -> str:
 
 
 class LLMWrapper:
-    def __init__(self, model_path=None, hf_repo=None, hf_file=None, use_cuda=False):
+    def __init__(self, model_path=None, hf_repo=None, hf_file=None, use_cuda=False, ctx=4096):
         self.model_path = model_path
         self.hf_repo = hf_repo
         self.hf_file = hf_file.strip() if isinstance(hf_file, str) else hf_file
         self.use_cuda = use_cuda
+        self.ctx = ctx
         self.backend = None
         self.model = None
         self.tokenizer = None
         self.pipeline = None
         self._init_backend()
+
+    def _estimate_prompt_tokens(self, prompt: str) -> int:
+        if not self.model:
+            return max(1, len(prompt) // 4)
+
+        tokenize = getattr(self.model, "tokenize", None)
+        if not callable(tokenize):
+            return max(1, len(prompt) // 4)
+
+        prompt_bytes = prompt.encode("utf-8", errors="ignore")
+        for kwargs in (
+            {"add_bos": True},
+            {"add_bos": False},
+            {},
+        ):
+            try:
+                tokens = tokenize(prompt_bytes, **kwargs)
+                return max(1, len(tokens))
+            except TypeError:
+                continue
+            except Exception:
+                break
+
+        return max(1, len(prompt) // 4)
+
+    def _clamp_max_tokens(self, prompt: str, requested: int) -> int:
+        requested = max(1, int(requested or 1))
+        prompt_tokens = self._estimate_prompt_tokens(prompt)
+        safety_margin = 128
+        available = max(1, self.ctx - prompt_tokens - safety_margin)
+        safe = min(requested, available)
+        if safe < requested:
+            print(f'[WARN] Reducing max_tokens from {requested} to {safe} to fit ctx={self.ctx} (prompt_tokens≈{prompt_tokens}).')
+        return safe
 
     def _init_backend(self):
         wants_gguf = bool((self.hf_file and self.hf_file.lower().endswith('.gguf')) or (self.model_path and str(self.model_path).lower().endswith('.gguf')))
@@ -124,6 +159,7 @@ class LLMWrapper:
 
                 if self.use_cuda:
                     llm_kwargs['n_gpu_layers'] = -1
+                llm_kwargs['n_ctx'] = self.ctx
 
                 self.model = Llama.from_pretrained(**llm_kwargs)
                 return
@@ -172,6 +208,7 @@ class LLMWrapper:
         if self.backend == 'llama_cpp':
             
             try:
+                max_tokens = self._clamp_max_tokens(prompt, max_tokens)
                 out = self.model(prompt, max_tokens=max_tokens)
 
                 if isinstance(out, dict) and 'choices' in out:
@@ -214,7 +251,7 @@ def completion(req: CompletionRequest):
 def run_server(args):
   
     global MODEL
-    MODEL = LLMWrapper(model_path=args.local_model, hf_repo=args.hf_repo, hf_file=args.hf_file, use_cuda=args.use_cuda)
+    MODEL = LLMWrapper(model_path=args.local_model, hf_repo=args.hf_repo, hf_file=args.hf_file, use_cuda=args.use_cuda, ctx=args.ctx)
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port)
 
@@ -226,6 +263,7 @@ if __name__ == '__main__':
     parser.add_argument('--hf-file', type=str, help='HF file or GGUF filename for llama-cpp')
     parser.add_argument('--host', type=str, default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8081)
+    parser.add_argument('--ctx', type=int, default=4096, help='Context window size for llama.cpp')
     parser.add_argument('--use-cuda', action='store_true', help='Attempt to use CUDA/GPU')
     parsed = parser.parse_args()
 

@@ -115,6 +115,7 @@ def main():
         "--hf-file", model_file,
         "--host", "127.0.0.1",
         "--port", "8081",
+        "--ctx", "4096",
         "--use-cuda",
     ])
     log_path = "/content/server_colab.log"
