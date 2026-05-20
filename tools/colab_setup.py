@@ -7,6 +7,59 @@ import time
 import socket
 import shutil
 import shlex
+import re
+
+
+def detect_cuda_version():
+    """Detect CUDA version from nvidia-smi output."""
+    print("[INFO] Detecting CUDA version...")
+    code, smi_output, _ = run_command("nvidia-smi")
+    if code != 0:
+        print("[WARNING] Could not run nvidia-smi, assuming CUDA 12.1")
+        return "121"
+
+    # Parse CUDA version from nvidia-smi output
+    # Example: "CUDA Version: 12.2"
+    match = re.search(r'CUDA Version:\s*(\d+)\.(\d+)', smi_output)
+    if match:
+        major = match.group(1)
+        minor = match.group(2)
+        cuda_version = f"{major}{minor}"
+        print(f"[INFO] Detected CUDA version: {major}.{minor} (using cu{cuda_version})")
+        return cuda_version
+    else:
+        print("[WARNING] Could not parse CUDA version from nvidia-smi, assuming CUDA 12.1")
+        return "121"
+
+
+def verify_cuda_enabled():
+    """Verify that llama-cpp-python has CUDA support enabled."""
+    print("[INFO] Verifying CUDA support in llama-cpp-python...")
+    check_cmd = (
+        f"{sys.executable} -c \""
+        "import llama_cpp; "
+        "print('llama_cpp_version:', llama_cpp.__version__); "
+        "print('CUDA supported:', hasattr(llama_cpp, 'llama_cpp_cuda')); "
+        "try: "
+        "  import llama_cpp.llama_cpp_cuda as cuda; "
+        "  print('CUDA module loaded successfully'); "
+        "except ImportError as e: "
+        "  print('CUDA module import failed:', e)\""
+    )
+    code, stdout, _ = run_command(check_cmd)
+    if code != 0:
+        print("[ERROR] Failed to verify CUDA support")
+        return False
+
+    print("[INFO] CUDA verification output:")
+    print(stdout)
+
+    if "CUDA module loaded successfully" in stdout:
+        print("[SUCCESS] CUDA support is properly enabled!")
+        return True
+    else:
+        print("[WARNING] CUDA support may not be properly enabled")
+        return False
 
 
 def ensure_python_dependencies(repo_root):
@@ -40,17 +93,34 @@ def ensure_python_dependencies(repo_root):
     else:
         print("[WARNING] requirements.txt not found; skipping dependency install.")
 
-    print("[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels (much faster)...")
-  
+    # Detect CUDA version and select appropriate wheel
+    cuda_version = detect_cuda_version()
+
+    print(f"[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels for CUDA {cuda_version}...")
     cuda_llama_cmd = (
         f'{sys.executable} -m pip install llama-cpp-python '
-        f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124'
+        f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu{cuda_version}'
     )
     code, _, err = run_command(cuda_llama_cmd)
 
-   
     if code != 0:
-        print("[WARNING] Pre-built wheel installation failed, falling back to compile from source...")
+        print(f"[WARNING] Pre-built wheel for cu{cuda_version} failed, trying cu124 as fallback...")
+        cuda_llama_cmd = (
+            f'{sys.executable} -m pip install llama-cpp-python '
+            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124'
+        )
+        code, _, err = run_command(cuda_llama_cmd)
+
+    if code != 0:
+        print(f"[WARNING] Pre-built wheel for cu124 failed, trying cu121 as fallback...")
+        cuda_llama_cmd = (
+            f'{sys.executable} -m pip install llama-cpp-python '
+            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121'
+        )
+        code, _, err = run_command(cuda_llama_cmd)
+
+    if code != 0:
+        print("[WARNING] All pre-built wheels failed, falling back to compile from source...")
         print("[INFO] This may take 10-20 minutes, please be patient...")
         cuda_llama_cmd = (
             f'FORCE_CMAKE=1 CMAKE_ARGS="-DGGML_CUDA=on" '
@@ -61,6 +131,14 @@ def ensure_python_dependencies(repo_root):
     if code != 0:
         print(f"[ERROR] Failed to install CUDA-enabled llama-cpp-python: {err}")
         sys.exit(1)
+
+    # Verify CUDA is actually enabled
+    cuda_enabled = verify_cuda_enabled()
+    if not cuda_enabled:
+        print("[WARNING] CUDA support verification failed. The model may run on CPU, which will be very slow.")
+        print("[INFO] If you want to force CPU-only mode, remove --use-cuda from server arguments.")
+    else:
+        print("[SUCCESS] CUDA support verified successfully!")
 
     check_cmd = (
         f"{sys.executable} -c \""
