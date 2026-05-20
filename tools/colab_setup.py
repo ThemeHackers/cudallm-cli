@@ -19,7 +19,21 @@ def ensure_python_dependencies(repo_root):
 
     if os.path.exists(req_file):
         print(f"[INFO] Installing Python dependencies from {req_file}...")
-        code, _, err = run_command(f"{sys.executable} -m pip install -r {shlex.quote(req_file)}")
+        base_deps = []
+        with open(req_file, "r", encoding="utf-8") as f:
+            for line in f:
+                item = line.strip()
+                if not item or item.startswith("#"):
+                    continue
+                if item == "llama-cpp-python":
+                    continue
+                base_deps.append(item)
+
+        if base_deps:
+            deps_args = " ".join(shlex.quote(dep) for dep in base_deps)
+            code, _, err = run_command(f"{sys.executable} -m pip install {deps_args}")
+        else:
+            code, _, err = 0, "", ""
         if code != 0:
             print(f"[ERROR] Failed to install requirements.txt: {err}")
             sys.exit(1)
