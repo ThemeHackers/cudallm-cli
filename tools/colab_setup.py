@@ -1,14 +1,26 @@
+#/usr/bin/env python3
+
 import os
 import sys
 import subprocess
 import time
 import socket
 import shutil
+import shlex
 
 def run_command(cmd, shell=True, timeout=None):
     print(f"[RUNNING] {cmd}")
     try:
         res = subprocess.run(cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+        if res.returncode != 0:
+            # Show a concise failure summary to help debugging
+            out_tail = (res.stdout or "")[-2000:]
+            err_tail = (res.stderr or "")[-2000:]
+            print("[COMMAND FAILED] return code:", res.returncode)
+            if out_tail:
+                print("[STDOUT - tail]:\n" + out_tail)
+            if err_tail:
+                print("[STDERR - tail]:\n" + err_tail)
         return res.returncode, res.stdout, res.stderr
     except subprocess.TimeoutExpired as e:
         return -1, e.stdout or "", e.stderr or "Timeout expired"
@@ -39,10 +51,12 @@ def main():
         print("[SUCCESS] Installed cudallm in editable mode.")
 
     if is_port_open(8081):
-        print("[INFO] Port 8081 is in use. Terminating existing process...")
-        run_command("fuser -k 8081/tcp")
-        time.sleep(2)
-        if is_port_open(8081):
+        print("[INFO] Port 8081 is in use. Attempting to terminate existing process...")
+        # Use available tools if present
+        if shutil.which("fuser"):
+            run_command("fuser -k 8081/tcp")
+            time.sleep(2)
+        if is_port_open(8081) and shutil.which("lsof"):
             run_command("lsof -t -i:8081 | xargs kill -9")
             time.sleep(2)
 
@@ -59,22 +73,48 @@ def main():
         
        
         if not os.path.exists("/content/llama.cpp"):
-            code, out, err = run_command("git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp")
+            # Retry a few times in case of transient network failures
+            retries = 3
+            for attempt in range(1, retries + 1):
+                code, out, err = run_command("git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp")
+                if code == 0:
+                    break
+                print(f"[WARNING] git clone failed (attempt {attempt}/{retries}). Retrying...")
+                time.sleep(2 * attempt)
             if code != 0:
-                print(f"[ERROR] Failed to clone llama.cpp: {err}")
+                print(f"[ERROR] Failed to clone llama.cpp after {retries} attempts: {err}")
                 sys.exit(1)
 
       
         os.makedirs("/content/llama.cpp/build", exist_ok=True)
+
+        # Quick check for nvcc availability; warn but continue
+        if not shutil.which("nvcc"):
+            print("[WARNING] 'nvcc' not found in PATH. Ensure CUDA toolkit is installed; the build may still succeed if system compilers/linkers handle it.")
+
         code, out, err = run_command("cmake -B /content/llama.cpp/build -S /content/llama.cpp -DGGML_CUDA=ON")
         if code != 0:
-            print(f"[ERROR] CMake configuration failed: {err}")
+            print(f"[ERROR] CMake configuration failed. See output above for details.")
             sys.exit(1)
 
+        # Determine number of parallel jobs
+        def get_make_jobs():
+            try:
+                env = os.environ.get("MAKE_JOBS")
+                if env:
+                    return int(env)
+            except Exception:
+                pass
+            n = os.cpu_count() or 2
+            return min(max(1, n), 16)
 
-        code, out, err = run_command("cmake --build /content/llama.cpp/build --config Release --target llama-server -j$(nproc)")
+        jobs = get_make_jobs()
+        build_cmd = f"cmake --build /content/llama.cpp/build --config Release --target llama-server -j{jobs}"
+        code, out, err = run_command(build_cmd)
         if code != 0:
-            print(f"[ERROR] Build failed: {err}")
+            print(f"[ERROR] Build failed. Showing last 2000 chars of output for diagnosis:")
+            combined = (out or "") + "\n" + (err or "")
+            print(combined[-2000:])
             sys.exit(1)
 
     if os.path.exists(cuda_server_path):
