@@ -63,7 +63,7 @@ class LLMWrapper:
     def __init__(self, model_path=None, hf_repo=None, hf_file=None, use_cuda=False):
         self.model_path = model_path
         self.hf_repo = hf_repo
-        self.hf_file = hf_file
+        self.hf_file = hf_file.strip() if isinstance(hf_file, str) else hf_file
         self.use_cuda = use_cuda
         self.backend = None
         self.model = None
@@ -74,8 +74,6 @@ class LLMWrapper:
     def _init_backend(self):
         wants_gguf = bool((self.hf_file and self.hf_file.lower().endswith('.gguf')) or (self.model_path and str(self.model_path).lower().endswith('.gguf')))
 
-    
-
         llama_cpp = try_import('llama_cpp')
         if llama_cpp is not None:
             try:
@@ -83,28 +81,23 @@ class LLMWrapper:
                 print('[INFO] Using llama-cpp-python backend')
                 self.backend = 'llama_cpp'
 
-                model_arg = self.model_path
-             
-                if not model_arg and self.hf_repo and self.hf_file:
-                    hub = try_import('huggingface_hub')
-                    if hub is None:
-                        raise RuntimeError('huggingface_hub is required for --hf-repo/--hf-file with GGUF. Install: pip install huggingface_hub')
-                    from huggingface_hub import hf_hub_download
-                    print(f'[INFO] Downloading GGUF from HF: repo={self.hf_repo} file={self.hf_file}')
-                    model_arg = hf_hub_download(repo_id=self.hf_repo, filename=self.hf_file)
-
-              
-                if not model_arg and self.hf_file and os.path.exists(self.hf_file):
-                    model_arg = self.hf_file
-
-                if not model_arg:
+                if self.model_path:
+                    llm_kwargs = {'model_path': self.model_path}
+                elif self.hf_repo and self.hf_file:
+                    print(f'[INFO] Downloading GGUF from HF via llama-cpp-python: repo={self.hf_repo} file={self.hf_file}')
+                    llm_kwargs = {
+                        'repo_id': self.hf_repo,
+                        'filename': self.hf_file,
+                    }
+                elif self.hf_file and os.path.exists(self.hf_file):
+                    llm_kwargs = {'model_path': self.hf_file}
+                else:
                     raise RuntimeError('No model path supplied for llama-cpp')
 
-                llm_kwargs = {'model_path': model_arg}
                 if self.use_cuda:
                     llm_kwargs['n_gpu_layers'] = -1
 
-                self.model = Llama(**llm_kwargs)
+                self.model = Llama.from_pretrained(**llm_kwargs)
                 return
             except Exception as e:
                 print('[WARN] llama-cpp import or init failed:', e)
