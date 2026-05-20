@@ -6,6 +6,7 @@ nvidia-ml-py
 fastapi 
 uvicorn 
 llama-cpp-python
+huggingface_hub
 
 # GPU extras (optional) — install via: pip install -e ".[gpu]"
 # --extra-index-url https://download.pytorch.org/whl/cu130

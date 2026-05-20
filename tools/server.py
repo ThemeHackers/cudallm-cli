@@ -26,17 +26,23 @@ Note: This server is a minimal example. Production deployments should add auth, 
 import argparse
 import os
 import sys
-import threading
-import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI()
-
 MODEL = None
 ENGINE = None
+
+
+@asynccontextmanager
+async def lifespan(app):
+    # Model is initialized in run_server(); keep lifespan for future startup/shutdown hooks.
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 class CompletionRequest(BaseModel):
     prompt: str
@@ -66,6 +72,8 @@ class LLMWrapper:
         self._init_backend()
 
     def _init_backend(self):
+        wants_gguf = bool((self.hf_file and self.hf_file.lower().endswith('.gguf')) or (self.model_path and str(self.model_path).lower().endswith('.gguf')))
+
         # Try llama-cpp-python first (works with GGUF + llama.cpp)
         llama_cpp = try_import('llama_cpp')
         if llama_cpp is not None:
@@ -73,14 +81,38 @@ class LLMWrapper:
                 from llama_cpp import Llama
                 print('[INFO] Using llama-cpp-python backend')
                 self.backend = 'llama_cpp'
-                # model_path: prefer local path (GGUF) provided via --local-model or hf-file
-                model_arg = self.model_path or self.hf_file
+
+                model_arg = self.model_path
+                # If GGUF is provided as HF repo/file, download to local cache first.
+                if not model_arg and self.hf_repo and self.hf_file:
+                    hub = try_import('huggingface_hub')
+                    if hub is None:
+                        raise RuntimeError('huggingface_hub is required for --hf-repo/--hf-file with GGUF. Install: pip install huggingface_hub')
+                    from huggingface_hub import hf_hub_download
+                    print(f'[INFO] Downloading GGUF from HF: repo={self.hf_repo} file={self.hf_file}')
+                    model_arg = hf_hub_download(repo_id=self.hf_repo, filename=self.hf_file)
+
+                # If --hf-file is a local path, accept it directly.
+                if not model_arg and self.hf_file and os.path.exists(self.hf_file):
+                    model_arg = self.hf_file
+
                 if not model_arg:
                     raise RuntimeError('No model path supplied for llama-cpp')
-                self.model = Llama(model_path=model_arg)
+
+                llm_kwargs = {'model_path': model_arg}
+                if self.use_cuda:
+                    llm_kwargs['n_gpu_layers'] = -1
+
+                self.model = Llama(**llm_kwargs)
                 return
             except Exception as e:
                 print('[WARN] llama-cpp import or init failed:', e)
+
+        if wants_gguf:
+            raise RuntimeError(
+                'GGUF model requested, but llama-cpp-python is unavailable or failed to initialize. '
+                'Install llama-cpp-python (and huggingface_hub for --hf-repo/--hf-file).'
+            )
 
         # Fallback to transformers pipeline
         transformers = try_import('transformers')
@@ -101,7 +133,7 @@ class LLMWrapper:
             kwargs = {}
             if self.use_cuda:
                 # prefer fp16 to reduce memory
-                kwargs['torch_dtype'] = getattr(torch, 'float16', None)
+                kwargs['dtype'] = getattr(torch, 'float16', None)
 
             print(f'[INFO] Loading model {model_id} (this may take a while)')
             tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
@@ -139,23 +171,6 @@ class LLMWrapper:
                 raise RuntimeError('transformers generation error: ' + str(e))
         else:
             raise RuntimeError('No backend available')
-
-
-@app.on_event('startup')
-def on_startup():
-    # MODEL is set by CLI thread (when run as script). If not, try to lazy-load from env.
-    global MODEL
-    if MODEL is None:
-        model_path = os.environ.get('LLM_LOCAL_MODEL')
-        hf_repo = os.environ.get('LLM_HF_REPO')
-        hf_file = os.environ.get('LLM_HF_FILE')
-        use_cuda = os.environ.get('LLM_USE_CUDA', '0') == '1'
-        if model_path or hf_repo or hf_file:
-            try:
-                MODEL = LLMWrapper(model_path=model_path, hf_repo=hf_repo, hf_file=hf_file, use_cuda=use_cuda)
-                print('[INFO] Model initialized on startup')
-            except Exception as e:
-                print('[ERROR] Failed to initialize model on startup:', e)
 
 
 @app.get('/health')

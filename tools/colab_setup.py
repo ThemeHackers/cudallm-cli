@@ -8,6 +8,38 @@ import socket
 import shutil
 import shlex
 
+
+def ensure_python_dependencies(repo_root):
+    req_file = os.path.join(repo_root, "requirements.txt")
+
+    print("[INFO] Upgrading pip/setuptools/wheel...")
+    code, _, err = run_command(f"{sys.executable} -m pip install -U pip setuptools wheel")
+    if code != 0:
+        print(f"[WARNING] Failed to upgrade packaging tools: {err}")
+
+    if os.path.exists(req_file):
+        print(f"[INFO] Installing Python dependencies from {req_file}...")
+        code, _, err = run_command(f"{sys.executable} -m pip install -r {shlex.quote(req_file)}")
+        if code != 0:
+            print(f"[ERROR] Failed to install requirements.txt: {err}")
+            sys.exit(1)
+    else:
+        print("[WARNING] requirements.txt not found; skipping dependency install.")
+
+    # Sanity-check imports required by tools/server.py
+    check_cmd = (
+        f"{sys.executable} -c \""
+        "import fastapi,uvicorn,huggingface_hub; "
+        "import llama_cpp; "
+        "print('deps-ok')"
+        "\""
+    )
+    code, _, err = run_command(check_cmd)
+    if code != 0:
+        print("[ERROR] Missing required Python packages for server backend (fastapi/uvicorn/huggingface_hub/llama_cpp).")
+        print(f"[DETAIL] {err}")
+        sys.exit(1)
+
 def run_command(cmd, shell=True, timeout=None):
     print(f"[RUNNING] {cmd}")
     try:
@@ -43,8 +75,10 @@ def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(repo_root)
 
+    ensure_python_dependencies(repo_root)
+
     print("[INFO] Installing cudallm in editable mode...")
-    code, out, err = run_command("pip install -e .")
+    code, out, err = run_command(f"{sys.executable} -m pip install -e .")
     if code != 0:
         print(f"[WARNING] Failed to install cudallm in editable mode: {err}")
     else:
@@ -92,7 +126,7 @@ def main():
 
     print("[INFO] Waiting for server initialization and model download/loading...")
     attempts = 0
-    max_attempts = 30
+    max_attempts = 120
     server_ready = False
     while attempts < max_attempts:
         time.sleep(5)
@@ -105,6 +139,10 @@ def main():
             if "HTTP server error" in log_content:
                 print("[ERROR] Server encountered an HTTP server error.")
                 print(log_content[-1000:])
+                sys.exit(1)
+            if "Traceback (most recent call last):" in log_content or "RuntimeError:" in log_content or "OSError:" in log_content:
+                print("[ERROR] Server failed during startup. Log tail:")
+                print(log_content[-2000:])
                 sys.exit(1)
             if (
                 "server is listening on" in log_content
