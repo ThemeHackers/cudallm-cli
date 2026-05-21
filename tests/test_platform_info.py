@@ -207,11 +207,11 @@ class TestCompiledBinaryName:
 class TestDefaultLLMPort:
     def test_colab_port(self):
         with patch("src.platform_info.is_colab", return_value=True):
-            assert get_default_llm_port() == 8081
+            assert get_default_llm_port() == 1234
 
     def test_non_colab_port(self):
         with patch("src.platform_info.is_colab", return_value=False):
-            assert get_default_llm_port() == 8080
+            assert get_default_llm_port() == 1234
 
 
 class TestPlatformDisplayName:

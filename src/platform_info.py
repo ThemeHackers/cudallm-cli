@@ -113,12 +113,11 @@ def get_compiled_binary_name(run_id: str) -> str:
 
 def get_default_llm_port() -> int:
     """
-    Return the conventional default port for the local LLM server.
+    Return the conventional default port for the local LLM server (LM Studio).
 
-    On Colab we use 8081 to avoid potential clashes with Jupyter's
-    built-in services; on Windows/Linux we default to 8080.
+    LM Studio defaults to 1234 on all platforms.
     """
-    return 8081 if is_colab() else 8080
+    return 1234
 
 
 def platform_display_name() -> str:

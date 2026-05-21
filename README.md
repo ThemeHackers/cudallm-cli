@@ -33,10 +33,11 @@ Local Autonomous CUDA Optimization Agent — A closed-loop tool that uses a loca
 
 ## Key Features
 - **Closed-Loop Self-Healing**: Automatically captures NVCC compiler error logs and passes them back to the LLM to resolve syntax errors or API mismatches.
+- **Smarter Repair Loop**: Compile failures are summarized and sent back to the LLM for another repair pass before recompiling, while verification failures are routed through a separate correctness-healing path.
 - **Mathematical Correctness Validation**: Verifies that optimized kernels generate output matching the baseline kernel before comparing execution speed.
 - **Deep Profiling Integration**: Connects directly with NVIDIA Nsight Compute (`ncu`) and Nsight Systems (`nsys`) to collect exact hardware execution metrics.
-- **Interactive Console Dashboard**: Visualizes execution logs, live hardware metrics (CPU, RAM, GPU, VRAM usage), and code diffs in real-time.
-- **Custom Local LLM Server**: Packages `llama-server` with auto-update, GPU offloading, API key authentication, and TLS support.
+- **Structured Console Dashboard**: Visualizes execution state, live hardware metrics (CPU, RAM, GPU, VRAM usage), and code diffs in real-time with concise status updates and clearer failure states.
+- **LM Studio Integration**: Interfaces directly with LM Studio's standard OpenAI-compatible API endpoint (`http://127.0.0.1:1234/v1/completions`) for fast, local, GPU-accelerated LLM reasoning without compiling local bindings.
 
 ---
 
@@ -87,38 +88,44 @@ nsys --version
    cd cudallm-cli
    ```
 
-3. **Create and activate Python virtual environment**:
+3. **Install and set up (Automated - Recommended)**:
+   Simply run the automated installation script. It will automatically check or create the virtual environment, install all dependencies, and initialize the system:
    ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\activate
-   ```
-   *หมายเหตุ: ถ้าเกิด error เกี่ยวกับ execution policy ให้รันคำสั่งนี้ก่อน:*
-   ```powershell
-   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-   ```
-
-4. **Install dependencies and package**:
-   ```powershell
-   pip install -r requirements.txt
-   pip install -e .
+   # If you get an execution policy error, run this first:
+   # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   
+   .\install.ps1
    ```
 
-5. **Initialize environment**:
-   ```powershell
-   cudallm init
-   ```
+4. **Install and set up (Manual)**:
+   If you prefer manual setup:
+   - Create and activate the virtual environment:
+     ```powershell
+     python -m venv .venv
+     .\.venv\Scripts\activate
+     ```
+   - Install dependencies and local packages:
+     ```powershell
+     pip install -r requirements.txt
+     pip install -e .
+     cudallm setup-gpu
+     ```
+   - Initialize and verify:
+     ```powershell
+     cudallm init
+     cudallm doctor
+     ```
 
-6. **Verify installation**:
-   ```powershell
-   cudallm doctor
-   ```
+> [!TIP]
+> **LM Studio Setup**:
+> Make sure to download and start **LM Studio**. Under the developer tab, load a GGUF model (e.g., `cudaLLM-8B` or similar) and start the local server on port `1234` before running the optimizer.
 
 ### Google Colab Installation (Tesla T4 GPU)
 
 1. **Open Google Colab notebook** and enable GPU:
    - Go to Runtime → Change runtime type → Hardware accelerator → GPU (T4)
 
-2. **Install CUDA Toolkit** (Colab มี CUDA อยู่แล้ว แต่ต้องตรวจสอบ):
+2. **Install CUDA Toolkit** (Colab has CUDA pre-installed, but verify):
    ```bash
    !nvcc --version
    !nvidia-smi
@@ -132,13 +139,13 @@ nsys --version
    !pip install -e .
    ```
 
-4. **Install NVIDIA Nsight Tools** (สำหรับ Colab):
+4. **Install NVIDIA Nsight Tools** (for Colab):
    ```bash
-   # Nsight Compute สำหรับ profiling
+   # Nsight Compute for profiling
    !wget https://developer.download.nvidia.com/devtools/nsight-compute/2026_1/Nsight_Compute_Linux_2026.1.1.97_39587526.deb
    !dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
 
-   # Nsight Systems สำหรับ system profiling
+   # Nsight Systems for system profiling
    !wget https://developer.download.nvidia.com/devtools/nsight-systems/2026_1/Nsight_Systems_Linux_2026.1.1.97_39587526.deb
    !dpkg -i Nsight_Systems_Linux_2026.1.1.97_39587526.deb
    ```
@@ -149,12 +156,12 @@ nsys --version
    !cudallm doctor
    ```
 
-6. **Download GGUF model for Tesla T4**:
+6. **Configure LLM Connection**:
+   On Google Colab, you can connect to your local LM Studio instance (e.g. via an ngrok tunnel or other port forwarding) or a remote OpenAI-compatible endpoint:
    ```bash
-   # ใช้ model ที่เหมาะกับ T4 (16GB VRAM)
-   !cudallm serve --port 8080 --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf --ngl 33
+   # Verify the connection to your remote/forwarded LM Studio server (default port 1234)
+   !cudallm serve
    ```
-   *หมายเหตุ: `--ngl 33` เพื่อ offload 33 layers ไปยัง GPU T4*
 
 ### Linux/macOS Installation
 
@@ -164,28 +171,41 @@ nsys --version
    cd cudallm-cli
    ```
 
-2. **Create and activate virtual environment**:
+2. **Install and set up (Automated - Recommended)**:
+   Simply run the automated installation script. It will automatically check or create the virtual environment, install all dependencies, and initialize the system:
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate
+   chmod +x ./install.sh
+   ./install.sh
    ```
 
-3. **Install dependencies and package**:
-   ```bash
-   pip install -r requirements.txt
-   pip install -e .
-   ```
+3. **Install and set up (Manual)**:
+   If you prefer manual setup:
+   - Create and activate the virtual environment:
+     ```bash
+     python3 -m venv .venv
+     source .venv/bin/activate
+     ```
+   - Install dependencies and local packages:
+     ```bash
+     pip install -r requirements.txt
+     pip install -e .
+     cudallm setup-gpu
+     ```
+   - Initialize and verify:
+     ```bash
+     cudallm init
+     cudallm doctor
+     ```
 
-4. **Initialize environment**:
-   ```bash
-   cudallm init
-   ```
+### Optional GPU Extras (PyTorch + CUDA)
 
-### Optional GPU Extras
-
-If you want the optional GPU extras, install them with:
+If you want the optional GPU extras (e.g., for the transformers fallback backend on Windows), install them with:
 ```powershell
+# Default installation
 pip install -e ".[gpu]"
+
+# On Windows, to ensure PyTorch has CUDA support, install from PyTorch's custom index:
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126 --force-reinstall
 ```
 
 ---
@@ -198,10 +218,10 @@ Run the discovery command to scan for compiler tools, profilers, and GPU capabil
 cudallm init
 ```
 
-### Step 2: Launch Local LLM Server
-Download and start `llama-server` automatically with GPU acceleration:
+### Step 2: Verify LM Studio Connection
+Start **LM Studio** manually, load a model in the **Developer Tab**, start the server (default port `1234`), and verify the connection status:
 ```powershell
-cudallm serve --port 8080 --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf
+cudallm serve
 ```
 
 ### Step 3: Run Kernel Optimization
@@ -218,7 +238,8 @@ cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto
 | :--- | :--- | :--- | :--- |
 | `init` | None | None | Scans system paths, locates compiler/profiler executables, and persists configuration. |
 | `doctor` / `check` | None | None | Displays a clean summary table of discovered paths and GPU capability. |
-| `serve` | None | `--host`, `--port`, `--repo`, `--file`, `--ngl`, `--ctx`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--no-update` | Starts the GGUF LLM server locally. Automatically handles downloads, updates, and GPU layer offloading (`-ngl`). |
+| `setup-gpu` | None | `--dry-run`, `--force-reinstall` | Verifies environment readiness for GPU kernel compiling. Bypasses llama-cpp-python installation. |
+| `serve` | None | `--host`, `--port`, `--repo`, `--file`, `--local-model`, `--use-cuda`, `--ngl`, `--ctx`, `--parallel`, `--no-update` | Checks LM Studio connection status or displays startup instructions. |
 | `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Runs the iterative optimization agent. Supports dry runs, folder batches, custom compilers flags, and NVTX injections. |
 | `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Performs advanced profiling on a compiled binary, identifies hotspots, runs deep NCU sweeps, and outputs LLM analyses. |
 | `audit` | `<file_or_folder>` | `--markdown`, `--recursive/--no-recursive`, `--llm-url` | Performs a static structural audit on CUDA kernels using LLM prompts. Can output reports in Markdown format. |
@@ -235,8 +256,11 @@ cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto
 When running `cudallm optimize`, the tool starts a closed feedback loop:
 * **The Harness**: A temporary verification harness is generated wrapping your CUDA kernel.
 * **NVCC Compilation**: The harness is compiled. If compilation fails, the compiler error output is automatically sent to the LLM alongside the generated source code with a prompt to "heal" the compile errors.
+   The compiler diagnostics are condensed first, then the LLM is asked to repair the source and the tool recompiles immediately.
 * **Correctness Check**: Once compiled, the binary runs and compares its mathematical output values against the baseline kernel. If verification fails, this is also sent to the LLM to fix logical discrepancies.
+   Verification failures follow a separate repair path so the model can focus on correctness rather than syntax.
 * **Profiling**: Only mathematically correct kernels are profiled to determine execution time, protecting against empty or dummy speedups.
+   If Nsight profiling falls back or cannot export data cleanly, the terminal now reports that explicitly instead of labeling the result as verified.
 
 #### Key Flags:
 * `--fast-math`: Injects `-use_fast_math` flags into compilation.
@@ -268,7 +292,7 @@ cudallm expert ./my_cuda_binary.exe --auto-nvtx --rerun
 ### Wildcard Interfaces
 Expose the server on local network interfaces using `--host 0.0.0.0`. When doing this, specify `--public-url` so other agents can resolve client routes:
 ```powershell
-cudallm serve --host 0.0.0.0 --port 8080 --public-url http://192.168.1.100:8080/completion
+cudallm serve --host 0.0.0.0 --port 1234 --public-url http://192.168.1.100:1234/v1/completions
 ```
 
 ### Security Credentials
@@ -309,7 +333,7 @@ On Linux self-hosted runners, use the `ci/ncu_regression_check.sh` utility:
 Config parameters are persisted inside `config/config.json`. Below is the schema structure:
 ```json
 {
-  "llm_url": "http://127.0.0.1:8080/completion",
+  "llm_url": "http://127.0.0.1:1234/v1/completions",
   "llm_api_key": null,
   "llm_api_key_file": null,
   "llm_verify_tls": true,
@@ -347,6 +371,8 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 **Solution**:
 - Add CUDA Toolkit to PATH: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin`
 - Or run `cudallm init` to auto-detect NVCC path
+
+
 
 **CUDA Out of Memory**
 ```
@@ -419,12 +445,12 @@ Ensure no other server instance binds to the specified port. Use `--reuse-port` 
 
 **LLM Server Connection Refused**
 ```
-Connection refused to http://localhost:8080/completion
+Connection refused to http://localhost:1234/v1/completions
 ```
 **Solution**:
-- Verify LLM server is running: `cudallm serve --port 8080 ...`
+- Verify LM Studio local server is running and listening: `cudallm serve --port 1234`
 - Check firewall settings
-- Verify port is not in use: `netstat -ano | findstr :8080` (Windows) or `lsof -i :8080` (Linux)
+- Verify port is not in use: `netstat -ano | findstr :1234` (Windows) or `lsof -i :1234` (Linux)
 
 **Compilation Errors Not Healing**
 If the self-healing loop fails to fix compilation errors:

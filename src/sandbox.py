@@ -556,7 +556,7 @@ int main(int argc, char** argv) {{
                 cmd = [binpath]
                 if self.profile_metrics:
                     cmd.extend(['--metrics', self.profile_metrics])
-                cmd.extend(['--csv', '--output', base, self.exe_path])
+                cmd.extend(['--csv', '-o', base, self.exe_path])
                 cmd.extend(args)
                 try:
                     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

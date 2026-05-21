@@ -8,6 +8,7 @@ from src.discover import find_nvcc_path
 from src.llm_client import LLMClient
 from src.profiler_tools import parse_ncu_csv_for_hotspot
 from tools.compare_ncu import numeric_columns
+from src.profiler_tools import run_ncu_broad
 
 
 class TestHarnessFixes(unittest.TestCase):
@@ -41,10 +42,117 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertEqual(client_ollama.url, "http://127.0.0.1:11434/api/generate")
 
         client_llama = LLMClient(url="http://127.0.0.1:8080")
-        self.assertEqual(client_llama.url, "http://127.0.0.1:8080/completion")
+        self.assertEqual(client_llama.url, "http://127.0.0.1:8080/v1/completions")
 
         client_specified = LLMClient(url="http://127.0.0.1:8080/v1/chat/completions")
         self.assertEqual(client_specified.url, "http://127.0.0.1:8080/v1/chat/completions")
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    @patch("src.llm_client.requests.post")
+    def test_generate_code_prefills_cuda_block(self, mock_post, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_lines.return_value = [b"data: [DONE]"]
+        mock_post.return_value = mock_response
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        client.generate_code("<|im_start|>system\nTest<|im_end|>\n<|im_start|>assistant\n", prefill=True)
+
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertTrue(payload["prompt"].endswith("```cuda\n"))
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    def test_optimization_prompt_requires_single_cuda_block(self, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        prompt = client.create_optimization_prompt(
+            code="__global__ void vectorAdd(float* A, float* B, float* C, int n) {}",
+            env_info={"gpu_model": "RTX 2060", "compute_capability": "7.5", "cuda_version": "13.0"},
+            target="latency",
+            best_time=float("inf"),
+            flags=["-O3"],
+        )
+
+        self.assertIn("Do not provide reasoning or commentary.", prompt)
+        self.assertIn("final answer must be exactly one complete ```cuda", prompt)
+        self.assertIn("Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block", prompt)
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    def test_healing_prompt_requires_single_cuda_block(self, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        prompt = client.create_healing_prompt(
+            code="__global__ void vectorAdd(float* A, float* B, float* C, int n) {}",
+            error_log="nvcc error",
+        )
+
+        self.assertIn("Do not provide reasoning or commentary.", prompt)
+        self.assertIn("final answer must be exactly one complete ```cuda", prompt)
+        self.assertIn("Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block", prompt)
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    def test_compile_repair_prompt_prioritizes_diagnostics(self, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        prompt = client.create_compile_repair_prompt(
+            code="__global__ void vectorAdd(float* A, float* B, float* C, int n) {}",
+            error_log="error: expected ';' before '}' token",
+        )
+
+        self.assertIn("Repair the user's CUDA source so it compiles cleanly", prompt)
+        self.assertIn("Prioritize the compiler diagnostics over the previous code", prompt)
+        self.assertIn("This is repair attempt 1/1", prompt)
+    self.assertIn("Compiler diagnostics summary:", prompt)
+    self.assertIn("Raw compiler diagnostics:", prompt)
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    def test_compile_repair_prompt_carries_retry_context(self, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        prompt = client.create_compile_repair_prompt(
+            code="__global__ void vectorAdd(float* A, float* B, float* C, int n) {}",
+            error_log="error: expected ';' before '}' token",
+            attempt_index=2,
+            max_attempts=3,
+        )
+
+        self.assertIn("This is repair attempt 2/3", prompt)
+        self.assertIn("If a previous repair failed", prompt)
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    def test_diagnostics_summarizer_keeps_key_errors(self, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        summary = client._summarize_diagnostics(
+            """
+            temp_kernel.cu(16): error: a value of type \"void *\" cannot be used to initialize an entity of type \"float *\"
+            temp_kernel.cu(17): error: a value of type \"void *\" cannot be used to initialize an entity of type \"float *\"
+            note: some unrelated note
+            """
+        )
+
+        self.assertIn("cannot be used to initialize", summary)
+        self.assertIn("temp_kernel.cu(16)", summary)
+        self.assertIn("temp_kernel.cu(17)", summary)
 
     def test_generated_harness_includes_profiler_toggle(self):
         from src.sandbox import CUDASandbox
@@ -130,6 +238,15 @@ class TestHarnessFixes(unittest.TestCase):
 
         self.assertTrue(client._looks_like_cuda_code("#include <cuda_runtime.h>\nint main() { return 0; }"))
         self.assertFalse(client._looks_like_cuda_code("This is just plain prose."))
+        
+     
+        prose_with_keywords = (
+            "Okay, let's see. The user's code failed because they tried to allocate memory "
+            "using cudaMalloc but didn't cast the result properly on the host side. "
+            "We should probably write float* d_A = (float*)malloc(size); or call "
+            "cudaMemcpy. Let me analyze what went wrong."
+        )
+        self.assertFalse(client._looks_like_cuda_code(prose_with_keywords))
 
     @patch("src.llm_client.validate_llm_endpoint")
     @patch("src.llm_client.build_auth_headers")
@@ -212,11 +329,10 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertIn("Nsight Systems 2024.1", nsys_path)
         self.assertIn("nsys.exe", nsys_path.lower())
 
-    @patch("src.discover.shutil.which")
-    @patch("src.discover.os.name", "nt")
-    @patch("src.discover.glob.glob")
     @patch("src.discover.os.path.exists")
-    def test_nsight_recursive_fallback_prefers_newer_version(self, mock_exists, mock_glob, mock_which):
+    @patch("src.discover.glob.glob")
+    @patch("src.discover.shutil.which")
+    def test_nsight_recursive_fallback_prefers_newer_version(self, mock_which, mock_glob, mock_exists):
         from src.discover import find_ncu_path, find_nsys_path
 
         mock_which.return_value = None
@@ -244,6 +360,41 @@ class TestHarnessFixes(unittest.TestCase):
 
         nsys_path = find_nsys_path()
         self.assertIn("2025.1", nsys_path)
+
+    @patch("src.discover.find_ncu_path", return_value="ncu")
+    @patch("src.profiler_tools.subprocess.run")
+    def test_run_ncu_broad_uses_export_flag(self, mock_run, mock_find_ncu):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        run_ncu_broad("dummy.exe", output_base="sample_report", metrics="sm__cycles_elapsed.avg")
+
+        cmd = mock_run.call_args.args[0]
+        self.assertIn("-o", cmd)
+        self.assertIn("sample_report", cmd)
+        self.assertNotIn("--output", cmd)
+
+    @patch("src.sandbox.find_ncu_path", return_value="ncu")
+    @patch("src.sandbox.find_nsys_path", return_value=None)
+    @patch("src.sandbox.subprocess.run")
+    def test_sandbox_profile_latency_uses_export_flag(self, mock_run, mock_nsys, mock_ncu):
+        from src.sandbox import CUDASandbox
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exe_path = os.path.join(tmpdir, "kernel.exe")
+            with open(exe_path, "w", encoding="utf-8") as handle:
+                handle.write("dummy")
+
+            sandbox = CUDASandbox(exe_path, profile_mode="ncu")
+            sandbox.exe_path = exe_path
+
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("src.sandbox.os.path.exists", side_effect=lambda path: path == exe_path):
+                sandbox.profile_latency()
+
+        cmd = mock_run.call_args.args[0]
+        self.assertIn("-o", cmd)
+        self.assertNotIn("--output", cmd)
 
     @patch("src.discover.os.path.exists")
     @patch("src.discover.glob.glob")
@@ -293,7 +444,7 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertEqual(res["basename"], "test_report")
         
         self.assertEqual(mock_run.call_count, 2)
-        self.assertEqual(mock_run.call_args_list[0][0][0], ["ncu", "--csv", "--output", "test_report", "dummy.exe"])
+        self.assertEqual(mock_run.call_args_list[0][0][0], ["ncu", "--csv", "-o", "test_report", "dummy.exe"])
         self.assertEqual(mock_run.call_args_list[1][0][0], ["ncu", "--import", "test_report.ncu-rep", "--csv"])
 
         mock_file.assert_called_once_with("test_report.csv", "w", encoding="utf-8")

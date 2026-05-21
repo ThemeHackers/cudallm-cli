@@ -144,6 +144,27 @@ class CLIDefaultsTest(unittest.TestCase):
         self.assertIsNotNone(asset)
         self.assertEqual(asset["name"], "llama-b9264-bin-ubuntu-cuda-x64.tar.gz")
 
+    def test_setup_gpu_command_flags(self):
+        setup_options = {param.name for param in main.commands["setup-gpu"].params}
+        self.assertIn("dry_run", setup_options)
+        self.assertIn("force_reinstall", setup_options)
+
+    def test_setup_gpu_dry_run_execution(self):
+        from unittest.mock import patch
+        
+        mock_env = {
+            'nvcc_found': True,
+            'compute_capability': '7.5',
+            'cuda_version': '13.0'
+        }
+        
+        with patch("src.cli.check_environment", return_value=mock_env):
+            result = CliRunner().invoke(main, ["setup-gpu", "--dry-run"])
+            
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertIn("CUDA Environment check passed!", result.output)
+        self.assertIn("bypassed", result.output)
+
 
 if __name__ == "__main__":
     unittest.main()

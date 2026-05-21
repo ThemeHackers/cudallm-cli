@@ -1,4 +1,5 @@
 import click
+import re
 import json
 import os
 import difflib
@@ -14,6 +15,7 @@ from .sandbox import CUDASandbox
 from .llm_client import LLMClient
 from .profiler_tools import run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
 from .network_security import validate_llm_endpoint
+from .terminal_manager import TerminalManager
 from . import platform_info
 import psutil
 try:
@@ -31,6 +33,7 @@ from rich.markdown import Markdown
 from rich.live import Live
 from rich.console import Group
 from rich.spinner import Spinner
+from rich.text import Text
 
 console = Console()
 
@@ -38,7 +41,7 @@ CONFIG_PATH = str(platform_info.get_config_path())
 _LEGACY_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
 
 DEFAULT_CONFIG = {
-    "llm_url": f"http://127.0.0.1:{platform_info.get_default_llm_port()}/completion",
+    "llm_url": f"http://127.0.0.1:{platform_info.get_default_llm_port()}/v1/completions",
     "llm_api_key": None,
     "llm_api_key_file": None,
     "llm_verify_tls": True,
@@ -422,28 +425,74 @@ class IterationDashboard:
         self.iter_num = iter_num
         self.total_iters = total_iters
         self.status_msg = "Initializing..."
-        self.spinner = Spinner("aesthetic")
+        self.spinner = Spinner("dots")
         
     def update_status(self, msg, spinner_name="aesthetic"):
-        self.status_msg = msg
+        self.status_msg = msg.replace("[INFO] ", "").replace("[ERROR] ", "").strip()
         try:
             self.spinner = Spinner(spinner_name)
         except KeyError:
-            self.spinner = spinner_name
+            self.spinner = Spinner("dots")
         
     def __rich__(self):
         table = get_resources_table()
-      
-        status_line = Group(
-            self.spinner,
-            f" {self.status_msg}"
+
+        progress_width = 18
+        total = max(self.total_iters, 1)
+        filled = int(round(progress_width * self.iter_num / total))
+        filled = max(0, min(progress_width, filled))
+        progress_bar = f"[green]{'▰' * filled}[/green][dim]{'▱' * (progress_width - filled)}[/dim]"
+
+        status_grid = Table.grid(expand=True)
+        status_grid.add_column(ratio=1)
+        status_grid.add_column(ratio=3)
+        status_grid.add_row(
+            "[bold cyan]Stage[/bold cyan]",
+            Group(self.spinner, Text.from_markup(f" {self.status_msg}")),
         )
+        status_grid.add_row(
+            "[bold cyan]Progress[/bold cyan]",
+            f"{progress_bar} [bold]{self.iter_num}/{self.total_iters}[/bold]",
+        )
+
         status_panel = Panel(
-            status_line,
+            status_grid,
             border_style="cyan",
-            title=f"Iteration {self.iter_num}/{self.total_iters} Activity Log"
+            title=f"Iteration {self.iter_num}/{self.total_iters}",
         )
         return Group(table, status_panel)
+
+
+def print_optimization_summary(output, best_time, original_latency, total_tokens, compile_enabled, completed_iters, profiling_status):
+    overview = Table(show_header=False, box=None, padding=(0, 1))
+    overview.add_column("Metric", style="bold cyan", no_wrap=True)
+    overview.add_column("Value", style="white")
+    overview.add_row("Output File", output)
+    overview.add_row("Generated Tokens", str(total_tokens))
+    overview.add_row("Completed Iterations", str(completed_iters))
+
+    if compile_enabled:
+        performance = Table(show_header=False, box=None, padding=(0, 1))
+        performance.add_column("Metric", style="bold cyan", no_wrap=True)
+        performance.add_column("Value", style="white")
+        performance.add_row("Best Latency", f"[bold yellow]{best_time:.4f} ms[/bold yellow]")
+        performance.add_row("Original Latency", f"{original_latency} ms")
+    else:
+        performance = Table(show_header=False, box=None, padding=(0, 1))
+        performance.add_column("Metric", style="bold cyan", no_wrap=True)
+        performance.add_column("Value", style="white")
+        performance.add_row("Verification", "[bold yellow]Skipped[/bold yellow]")
+        performance.add_row("Latency", "[dim]unverified[/dim]")
+
+    footer = Table.grid(expand=True)
+    footer.add_column(ratio=3)
+    footer.add_column(ratio=2, justify="right")
+    footer.add_row(
+        "[dim]Use --report for a JSON run log.[/dim]",
+        f"[bold green]{profiling_status}[/bold green]",
+    )
+
+    return Panel(Group(overview, performance, footer), border_style="green", title="Optimization Summary")
 
 def print_diff(old_code, new_code):
     diff = difflib.unified_diff(old_code.splitlines(), new_code.splitlines(), lineterm='')
@@ -524,6 +573,9 @@ cudallm doctor
 
 cudallm check
     Alias for doctor.
+
+cudallm setup-gpu
+    Auto-detect GPU architectures, MSVC capability, and compile/install llama-cpp-python with CUDA support.
 
 cudallm serve [options]
     Launch Python LLM backend (`tools/server.py`) with CUDA support.
@@ -627,12 +679,24 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
                 dashboard.update_status("Prompting local LLM for optimization...")
                 prompt = llm.create_optimization_prompt(current_code, env_info, target, best_time, flags)
 
-                live.stop()
-                new_code, gen_time = llm.generate_code(prompt)
-                live.start()
+                new_code, gen_time = llm.generate_code(
+                    prompt,
+                    status_callback=dashboard.update_status,
+                    prefill=True,
+                )
 
                 if not new_code:
-                    dashboard.update_status("[ERROR] No CUDA code returned; skipping iteration.", "dots")
+                    dashboard.update_status("No CUDA code returned; skipping iteration.", "dots")
+                    console.print(Panel(
+                        "[bold red]No CUDA code was returned.[/bold red]\n"
+                        "The model likely produced prose-only output or stopped before emitting a CUDA block.\n\n"
+                        "[bold]What to check:[/bold]\n"
+                        "- Tighten the prompt so the final answer must be a single ```cuda block.\n"
+                        "- Keep code generation in prefill mode so the assistant starts inside a code fence.\n"
+                        "- Verify the model is not truncating the response early.",
+                        title="LLM Output Issue",
+                        border_style="red",
+                    ))
                     try:
                         t_file = f"temp_kernel_{run_id}.cu"
                         if os.path.exists(t_file):
@@ -682,17 +746,25 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
                     if verification_failed:
                         console.print("[bold red][ERROR] Mathematical Verification Failed! Output does not match original baseline.[/bold red]")
                         console.print(Panel(compile_res['error_log'], title="[bold red][ERROR] Verification Error[/bold red]", border_style="red"))
+                        repair_prompt = llm.create_healing_prompt(new_code, compile_res['error_log'])
                     else:
                         console.print(f"[bold yellow][WARNING] Compilation failed! Attempting self-healing ({heal_attempts+1}/{retries})...[/bold yellow]")
                         console.print(Panel(Syntax(compile_res['error_log'], "text", theme="monokai"), title="[bold red][ERROR] NVCC Error Log[/bold red]", border_style="red"))
+                        repair_prompt = llm.create_compile_repair_prompt(
+                            new_code,
+                            compile_res['error_log'],
+                            attempt_index=heal_attempts + 1,
+                            max_attempts=retries,
+                        )
                     live.start()
 
-                    dashboard.update_status(f"Healing CUDA code with LLM... ({heal_attempts+1}/{retries})")
-                    heal_prompt = llm.create_healing_prompt(new_code, compile_res['error_log'])
+                    dashboard.update_status(f"Repairing CUDA code with LLM... ({heal_attempts+1}/{retries})")
 
-                    live.stop()
-                    new_code, gen_time = llm.generate_code(heal_prompt)
-                    live.start()
+                    new_code, gen_time = llm.generate_code(
+                        repair_prompt,
+                        status_callback=dashboard.update_status,
+                        prefill=True,
+                    )
 
                     if new_code:
                         with open(temp_file, 'w') as f:
@@ -720,7 +792,16 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
                     continue
 
                 latency = prof_res["latency"]
-                dashboard.update_status("Code compiled and verified mathematically!", "dots")
+                profile_note = prof_res.get("raw_output", "")
+                profiling_ok = (
+                    "NCU profiling failed" not in profile_note
+                    and "nsys invocation failed" not in profile_note
+                    and "VERIFICATION FAILURE" not in profile_note
+                )
+                if profiling_ok:
+                    dashboard.update_status("Code compiled and verified mathematically!", "dots")
+                else:
+                    dashboard.update_status("Code compiled; profiler fallback used.", "dots")
                 time.sleep(0.5)
 
             console.print("[bold green]Code compiled successfully![/bold green]")
@@ -749,21 +830,25 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
 
         if compile_enabled:
             original_latency = history[0]['latency'] if history else "unknown"
-            console.print(Panel(
-                f"[bold green]Local Optimization Complete![/bold green]\n"
-                f"  [bold]Saved Optimized Kernel to:[/bold] {output}\n"
-                f"  [bold]Best Latency:[/bold] [bold yellow]{best_time:.4f} ms[/bold yellow] (Original was {original_latency} ms)\n"
-                f"  [bold]Total Generated Tokens:[/bold] {llm.total_tokens}",
-                border_style="bold green",
-                title="Optimization Summary"
+            profiling_status = "Profiled" if (history and history[0]['latency'] != 99999.0) else "Profiler Fallback"
+            console.print(print_optimization_summary(
+                output=output,
+                best_time=best_time,
+                original_latency=original_latency,
+                total_tokens=llm.total_tokens,
+                compile_enabled=compile_enabled,
+                completed_iters=len(history),
+                profiling_status=profiling_status,
             ))
         else:
-            console.print(Panel(
-                f"[bold green]Optimization Complete (Unverified)![/bold green]\n"
-                f"  [bold]Saved Optimized File to:[/bold] {output}\n"
-                f"  [bold]Total Generated Tokens:[/bold] {llm.total_tokens}",
-                border_style="bold yellow",
-                title="Optimization Summary"
+            console.print(print_optimization_summary(
+                output=output,
+                best_time=float('inf'),
+                original_latency="unverified",
+                total_tokens=llm.total_tokens,
+                compile_enabled=False,
+                completed_iters=len(history),
+                profiling_status="Unverified",
             ))
 
         if report:
@@ -828,7 +913,7 @@ def check():
 @click.option('--apply-nvtx', is_flag=True, help='If set, apply LLM-produced NVTX suggestion (nvtx_suggestion.cu) into the harness during compilation')
 @click.option('--ncu-metrics', default='', help='Comma-separated list of ncu metrics to collect (e.g. sm__sass_thread_inst_executed_avg)')
 @click.option('--dry-run', is_flag=True, help='Show the planned optimization flow without compiling or profiling')
-@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL per-run (e.g. http://10.212.3.55:8080/completion)')
+@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL per-run (e.g. http://10.212.3.55:1234/v1/completions)')
 @click.option('--llm-api-key', envvar='LLM_API_KEY', default=None, help='Override the LLM API key per-run')
 @click.option('--llm-api-key-file', envvar='LLM_API_KEY_FILE', default=None, type=click.Path(exists=True, dir_okay=False), help='Override the LLM API key file path per-run')
 @click.option('--insecure', is_flag=True, help='Bypass HTTPS/TLS verification and allow insecure remote HTTP connections')
@@ -983,7 +1068,7 @@ def ncu(exe, metrics, output):
     cmd = [ncu_bin]
     if metrics:
         cmd += ['--metrics', metrics]
-    cmd += ['--csv', '--output', base, exe]
+    cmd += ['--csv', '-o', base, exe]
     try:
         console.print(f'[blue]Running:[/blue] {" ".join(cmd)}')
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
@@ -1060,7 +1145,7 @@ def profile(exe, mode, metrics, code):
 @click.option('--auto-nvtx', is_flag=True, help='Ask LLM to produce NVTX insertion suggestions and code snippets')
 @click.option('--rerun', is_flag=True, help='Rerun profiling after generating NVTX suggestions and save separate outputs')
 @click.option('--dry-run', is_flag=True, help='Show the planned expert workflow without running profilers or the LLM')
-@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL per-run (e.g. http://10.212.3.55:8080/completion)')
+@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL per-run (e.g. http://10.212.3.55:1234/v1/completions)')
 @click.option('--llm-api-key', envvar='LLM_API_KEY', default=None, help='Override the LLM API key per-run')
 @click.option('--llm-api-key-file', envvar='LLM_API_KEY_FILE', default=None, type=click.Path(exists=True, dir_okay=False), help='Override the LLM API key file path per-run')
 @click.option('--insecure', is_flag=True, help='Bypass HTTPS/TLS verification and allow insecure remote HTTP connections')
@@ -1127,7 +1212,11 @@ def expert(exe, metrics, run_deep, code, auto_nvtx, rerun, dry_run, llm_url, llm
                     f"You are a CUDA performance engineer. Given the following profiling summary:\n\n{profile_summary}\n\n"
                     f"And the hotspot kernel name: {hotspot['kernel']}. Provide concise NVTX instrumentation code snippets and macro definitions that can be inserted into the CUDA harness to mark high-level regions and the hotspot kernel. Output only CUDA/C++ code inside a ```cuda or ```cpp block."
                 )
-                nvtx_code, _ = llm.generate_code(nvtx_prompt)
+                nvtx_code, _ = llm.generate_code(
+                    nvtx_prompt,
+                    status_callback=dashboard.update_status,
+                    prefill=True,
+                )
                 if nvtx_code:
                     console.print(Panel(nvtx_code[:2000], title='NVTX Suggestion (truncated)'))
                     try:
@@ -1172,7 +1261,7 @@ def expert(exe, metrics, run_deep, code, auto_nvtx, rerun, dry_run, llm_url, llm
 @click.argument('input_file', type=click.Path(exists=True))
 @click.option('--markdown', is_flag=True)
 @click.option('--recursive/--no-recursive', default=True, help='Recurse into subfolders when input is a directory')
-@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL per-run (e.g. http://10.212.3.55:8080/completion)')
+@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL per-run (e.g. http://10.212.3.55:1234/v1/completions)')
 @click.option('--llm-api-key', envvar='LLM_API_KEY', default=None, help='Override the LLM API key per-run')
 @click.option('--llm-api-key-file', envvar='LLM_API_KEY_FILE', default=None, type=click.Path(exists=True, dir_okay=False), help='Override the LLM API key file path per-run')
 @click.option('--insecure', is_flag=True, help='Bypass HTTPS/TLS verification and allow insecure remote HTTP connections')
@@ -1279,9 +1368,37 @@ def check_and_prepare_python_server(project_dir, config):
 def check_and_update_llama_server(project_dir, config, no_update=False):
     return check_and_prepare_python_server(project_dir, config)
 
+@main.command(name='setup-gpu')
+@click.option('--dry-run', is_flag=True, help='Show the commands without executing them')
+@click.option('--force-reinstall', is_flag=True, default=True, help='Force reinstall (deprecated/ignored)')
+def setup_gpu(dry_run, force_reinstall):
+    """
+    Verify environment readiness for GPU kernel compiling.
+    """
+    console.print(Panel("[bold green]Verifying environment readiness for GPU kernel compiling[/bold green]", border_style="green"))
+    console.print(f"  [bold]Detected Terminal:[/bold] {TerminalManager.get_terminal_name()}")
+    
+    env_info = check_environment()
+    
+    if not env_info.get('nvcc_found'):
+        console.print("[bold red][ERROR] CUDA Toolkit (nvcc) not found on this system.[/bold red]")
+        console.print("Please install CUDA Toolkit and ensure 'nvcc' is in your PATH.")
+        return
+        
+    cc = env_info.get('compute_capability', 'Unknown')
+    cuda_ver = env_info.get('cuda_version', 'Unknown')
+    gpu_model = env_info.get('gpu_model', 'Unknown')
+    
+    console.print(f"[green][SUCCESS] CUDA Environment check passed![/green]")
+    console.print(f"  [bold]GPU Model:[/bold] {gpu_model}")
+    console.print(f"  [bold]CUDA Version:[/bold] {cuda_ver}")
+    console.print(f"  [bold]Compute Capability:[/bold] {cc}")
+    
+    console.print("\n[green][INFO] Note: llama-cpp-python installation is bypassed because cudallm-cli now interfaces directly with LM Studio.[/green]")
+
 @main.command()
-@click.option('--port', default=8080, help='Port to run the LLM server on')
-@click.option('--host', default='127.0.0.1', help='Host/interface for Python backend to bind to')
+@click.option('--port', default=1234, help='Port LM Studio is running on')
+@click.option('--host', default='127.0.0.1', help='Host/interface for LM Studio backend')
 @click.option('--public-url', default=None, help='Reachable URL to store in config for clients on this network')
 @click.option('--api-key', default=None, help='API key to require for server access (stored in config for client requests)')
 @click.option('--api-key-file', default=None, type=click.Path(exists=True, dir_okay=False), help='Path to a file containing one or more API keys')
@@ -1299,100 +1416,74 @@ def check_and_update_llama_server(project_dir, config, no_update=False):
 @click.option('--no-update', is_flag=True, help='Deprecated. Kept for compatibility; ignored by Python backend')
 def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_file, allow_unsafe_network, reuse_port, repo, file, local_model, use_cuda, ngl, ctx, parallel, no_update):
     """
-    Launch the local Python LLM backend (`tools/server.py`) with CUDA support.
+    Check LM Studio connection status or display startup instructions.
     """
-    console.print(Panel("[bold green]Launching Local Python LLM Backend with CUDA Support[/bold green]", border_style="green"))
-    
-   
-    env = os.environ.copy()
+    console.print(Panel("[bold green]Checking LM Studio Server Connection[/bold green]", border_style="green"))
+    console.print(f"  [bold]Detected Terminal:[/bold] {TerminalManager.get_terminal_name()}")
 
- 
+    scheme = "https" if (ssl_key_file and ssl_cert_file) else "http"
+    
+
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config = refresh_config_paths(project_dir)
-    server_path = check_and_prepare_python_server(project_dir, config)
-
-    api_keys_enabled = bool(api_key or api_key_file)
-    tls_enabled = bool(ssl_key_file and ssl_cert_file)
-    exposed_bind = host not in {"127.0.0.1", "localhost", "::1"}
-    if exposed_bind and not (api_keys_enabled or tls_enabled or allow_unsafe_network):
-        console.print(
-            "[bold red][ERROR] Refusing to expose the server on a network-facing host without API key or TLS.[/bold red]"
-        )
-        console.print("Use --api-key or --api-key-file, add --ssl-key-file and --ssl-cert-file, or pass --allow-unsafe-network to override.")
-        return
-
+    
     if public_url:
-        try:
-            apply_public_url_override(config, public_url, allow_insecure_remote=allow_unsafe_network)
-        except ValueError as exc:
-            console.print(f"[bold red][ERROR] Invalid public URL: {exc}[/bold red]")
-            return
+        config["llm_url"] = public_url
     else:
-        scheme = "https" if tls_enabled else "http"
-        if host in {"0.0.0.0", "::"}:
-            console.print("[bold yellow][WARNING] Host is a wildcard bind address, so cudallm cannot derive a client URL automatically.[/bold yellow]")
-            console.print("[yellow]Pass --public-url to store the reachable client URL in config.json.[/yellow]")
-        else:
-            config["llm_url"] = f"{scheme}://{host}:{port}/completion"
-
+        config["llm_url"] = f"{scheme}://{host}:{port}/v1/completions"
+        
+    if api_key:
+        config["llm_api_key"] = api_key
     if api_key_file:
         config["llm_api_key_file"] = api_key_file
-    if tls_enabled:
-        config["llm_verify_tls"] = True
+        
     save_config(config)
 
-
-    if any([no_update, ngl != 33, ctx != 4096, parallel != 1, reuse_port, api_key, api_key_file, ssl_key_file, ssl_cert_file]):
-        console.print("[yellow][WARNING] Some options are deprecated or not enforced by the Python backend and will be ignored by the process launch.[/yellow]")
-
-    cmd = [
-        sys.executable,
-        server_path,
-        "--host", host,
-        "--port", str(port),
-    ]
-    if local_model:
-        cmd.extend(["--local-model", local_model])
-    else:
-        cmd.extend(["--hf-repo", repo, "--hf-file", file])
-    if use_cuda:
-        cmd.append("--use-cuda")
-    
-    console.print(f"[bold blue][INFO] Running command:[/bold blue] {' '.join(cmd)}")
-    console.print("[bold yellow]Press Ctrl+C to terminate the server.[/bold yellow]\n")
-    
+   
+    test_url = f"{scheme}://{host}:{port}/v1/models"
     try:
-       
-        process = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
-        
-    
-        for line in process.stdout:
-            line_str = line.strip()
-            if "error" in line_str.lower() or "failed" in line_str.lower():
-                console.print(f"[red]{line_str}[/red]")
-            elif "cuda" in line_str.lower() or "gpu" in line_str.lower() or "device" in line_str.lower():
-                console.print(f"[bold green]{line_str}[/bold green]")
-            elif "listening" in line_str.lower() or "model loaded" in line_str.lower():
-                console.print(f"[bold cyan]{line_str}[/bold cyan]")
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        elif api_key_file and os.path.exists(api_key_file):
+            with open(api_key_file, "r") as f:
+                key = f.read().strip()
+                headers["Authorization"] = f"Bearer {key}"
+
+        response = requests.get(test_url, headers=headers, timeout=3, verify=False)
+        if response.status_code == 200:
+            models_data = response.json()
+            models_list = models_data.get("data", [])
+            
+            table = Table(title="LM Studio Status: Online", show_header=True, header_style="bold green")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="white")
+            table.add_row("Connection URL", f"{scheme}://{host}:{port}")
+            table.add_row("Configured endpoint", config["llm_url"])
+            
+            if models_list:
+                loaded_models = ", ".join([m.get("id", "Unknown") for m in models_list])
+                table.add_row("Loaded Model(s)", loaded_models)
             else:
-                console.print(line_str)
+                table.add_row("Loaded Model(s)", "[yellow]No models loaded in LM Studio[/yellow]")
                 
-        process.wait()
-    except KeyboardInterrupt:
-        console.print("\n[bold yellow][WARNING] Stopping LLM server...[/bold yellow]")
-        if 'process' in locals():
-            process.terminate()
-            process.wait()
-        console.print("[bold green][INFO] LLM server stopped cleanly.[/bold green]")
-    except Exception as e:
-        console.print(f"[bold red][ERROR] Failed to run Python LLM backend: {e}[/bold red]")
+            console.print(table)
+            console.print("[bold green][SUCCESS] Successfully connected to LM Studio local server![/bold green]")
+            return
+    except Exception:
+        pass
+
+
+    guide_text = (
+        "[bold red]Could not connect to LM Studio server.[/bold red]\n\n"
+        "[bold white]Please start LM Studio manually following these steps:[/bold white]\n"
+        "  1. [cyan]Open LM Studio[/cyan] on your machine.\n"
+        "  2. [cyan]Click on the Developer Tab[/cyan] (the '< >' icon on the left sidebar).\n"
+        "  3. [cyan]Select a model[/cyan] to load from the dropdown list at the top.\n"
+        "  4. [cyan]Click the 'Start Server' button[/cyan] (default port is [yellow]1234[/yellow]).\n"
+        "  5. Ensure your client configuration matches (e.g. run [yellow]cudallm init[/yellow] or check [yellow]config.json[/yellow]).\n"
+    )
+    console.print(Panel(guide_text, title="[bold yellow]LM Studio Integration Guide[/bold yellow]", border_style="yellow"))
 
 if __name__ == '__main__':
     main()

@@ -1,119 +1,268 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="980" viewBox="0 0 1400 980" role="img" aria-labelledby="title desc">
-  <title id="title">Closed-loop optimization and self-healing workflow</title>
-  <desc id="desc">A flowchart showing optimize, compile, verify, profile, and repeat steps for CUDA kernel improvement.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1180" viewBox="0 0 1200 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Closed-Loop Optimization &amp; Self-Healing Workflow</title>
+  <desc id="desc">Sleek top-down flow diagram detailing LLM optimization, NVCC compilation healing, verification healing, profiling, and update cycles.</desc>
   <defs>
-    <style>
-      .bg { fill: #0f172a; }
-      .box { fill: #111827; stroke: #60a5fa; stroke-width: 3; rx: 18; ry: 18; }
-      .diamond { fill: #111827; stroke: #f59e0b; stroke-width: 3; }
-      .term { fill: #0b1220; stroke: #34d399; stroke-width: 3; rx: 24; ry: 24; }
-      .text { fill: #e5e7eb; font: 600 22px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
-      .small { fill: #cbd5e1; font: 500 18px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
-      .label { fill: #f8fafc; font: 700 20px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
-      .arrow { stroke: #93c5fd; stroke-width: 4; fill: none; marker-end: url(#arrowhead); }
-      .arrow-warn { stroke: #f59e0b; stroke-width: 4; fill: none; marker-end: url(#arrowhead-warn); }
-      .arrow-ok { stroke: #34d399; stroke-width: 4; fill: none; marker-end: url(#arrowhead-ok); }
-      .note { fill: #94a3b8; font: 500 16px/1.2 Segoe UI, Arial, sans-serif; text-anchor: middle; dominant-baseline: middle; }
-    </style>
-    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L10,5 L0,10 z" fill="#93c5fd" />
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    
+    <!-- Box Gradients -->
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="heal-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#3b1324" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="success-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#062e21" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    
+    <!-- Glow Filters -->
+    <filter id="glow-sky" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="glow-rose" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="glow-amber" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="glow-emerald" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <!-- Marker Arrows -->
+    <marker id="arrow-sky" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#38bdf8" />
     </marker>
-    <marker id="arrowhead-warn" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L10,5 L0,10 z" fill="#f59e0b" />
+    <marker id="arrow-rose" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#f43f5e" />
     </marker>
-    <marker id="arrowhead-ok" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L10,5 L0,10 z" fill="#34d399" />
+    <marker id="arrow-emerald" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#10b981" />
+    </marker>
+    <marker id="arrow-amber" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#fbbf24" />
     </marker>
   </defs>
 
-  <rect class="bg" x="0" y="0" width="1400" height="980" rx="28" ry="28" />
-  <text x="700" y="54" class="label">Architecture &amp; Workflow</text>
-  <text x="700" y="84" class="note">Closed-loop optimization and self-healing process</text>
+  <style>
+    .card-title {
+      fill: #f8fafc;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+    .card-sub {
+      fill: #94a3b8;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 11px;
+      font-weight: 500;
+      text-anchor: middle;
+    }
+    .card-title-dark {
+      fill: #f8fafc;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+    .card-sub-dark {
+      fill: #fbbf24;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      text-anchor: middle;
+    }
+    .term-text {
+      fill: #f8fafc;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      font-weight: 800;
+      text-anchor: middle;
+      letter-spacing: 1px;
+    }
+    .arrow-standard {
+      stroke: #38bdf8;
+      stroke-width: 2.5;
+      fill: none;
+      marker-end: url(#arrow-sky);
+    }
+    .arrow-fail {
+      stroke: #f43f5e;
+      stroke-width: 2.5;
+      fill: none;
+      marker-end: url(#arrow-rose);
+    }
+    .arrow-success {
+      stroke: #10b981;
+      stroke-width: 2.5;
+      fill: none;
+      marker-end: url(#arrow-emerald);
+    }
+    .label-standard {
+      fill: #38bdf8;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+    .label-fail {
+      fill: #f43f5e;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+    .label-success {
+      fill: #10b981;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+    .title-main {
+      fill: #f8fafc;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 26px;
+      font-weight: 800;
+      text-anchor: middle;
+      letter-spacing: 0.5px;
+    }
+    .title-sub {
+      fill: #94a3b8;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      text-anchor: middle;
+    }
+  </style>
 
-  <!-- Top row -->
-  <rect class="term" x="80" y="130" width="220" height="74" />
-  <text x="190" y="167" class="text">Start</text>
-  <text x="190" y="192" class="small">Start Optimization</text>
+  <!-- Background -->
+  <rect width="1200" height="1180" fill="url(#bg-grad)" rx="16" />
 
-  <rect class="box" x="350" y="130" width="250" height="74" rx="18" ry="18" />
-  <text x="475" y="160" class="text">LLM Generates</text>
-  <text x="475" y="186" class="small">Optimized Code</text>
+  <!-- Header -->
+  <text x="600" y="50" class="title-main">ARCHITECTURE &amp; WORKFLOW</text>
+  <text x="600" y="75" class="title-sub">Closed-Loop CUDA Optimization &amp; Self-Healing System</text>
 
-  <rect class="box" x="650" y="130" width="250" height="74" rx="18" ry="18" />
-  <text x="775" y="160" class="text">Save to</text>
-  <text x="775" y="186" class="small">temp_kernel.cu</text>
+  <!-- 1. START Capsule -->
+  <rect x="510" y="115" width="180" height="50" rx="25" fill="#0f172a" stroke="#10b981" stroke-width="2" filter="url(#glow-emerald)" />
+  <text x="600" y="145" class="term-text">START</text>
 
-  <rect class="diamond" x="980" y="116" width="170" height="102" transform="rotate(45 1065 167)" />
-  <text x="1065" y="150" class="text">Compile</text>
-  <text x="1065" y="174" class="small">with NVCC</text>
+  <!-- Arrow: START -> LLM Optimizer -->
+  <path d="M 600 165 L 600 205" class="arrow-standard" />
 
-  <rect class="box" x="1210" y="130" width="160" height="74" rx="18" ry="18" />
-  <text x="1290" y="160" class="text">Success</text>
-  <text x="1290" y="186" class="small">Verify</text>
+  <!-- 2. LLM Optimizer Card -->
+  <rect x="450" y="205" width="300" height="70" rx="12" fill="url(#card-grad)" stroke="#38bdf8" stroke-width="2" filter="url(#glow-sky)" />
+  <text x="600" y="235" class="card-title">LLM Optimizer</text>
+  <text x="600" y="258" class="card-sub">Generates / edits CUDA kernel code</text>
 
-  <!-- Middle row -->
-  <rect class="box" x="930" y="320" width="250" height="82" rx="18" ry="18" />
-  <text x="1055" y="352" class="text">Create Healing</text>
-  <text x="1055" y="380" class="small">Prompt + Error Log</text>
+  <!-- Arrow: LLM Optimizer -> Compile -->
+  <path d="M 600 275 L 600 320" class="arrow-standard" />
 
-  <rect class="box" x="650" y="320" width="230" height="82" rx="18" ry="18" />
-  <text x="765" y="352" class="text">LLM Repairs</text>
-  <text x="765" y="380" class="small">Code</text>
+  <!-- 3. Compile (NVCC) Decision Diamond -->
+  <polygon points="600,320 690,365 600,410 510,365" fill="#1e293b" stroke="#fbbf24" stroke-width="2" filter="url(#glow-amber)" />
+  <text x="600" y="360" class="card-title-dark">Compile?</text>
+  <text x="600" y="380" class="card-sub-dark">(with NVCC)</text>
 
-  <rect class="diamond" x="960" y="480" width="220" height="120" transform="rotate(45 1070 540)" />
-  <text x="1070" y="523" class="text">Verify</text>
-  <text x="1070" y="548" class="small">Mathematical Correctness</text>
+  <!-- Compile Fail Arrow -->
+  <path d="M 510 365 L 400 365" class="arrow-fail" />
+  <text x="455" y="353" class="label-fail">Fail</text>
 
-  <rect class="box" x="650" y="650" width="250" height="82" rx="18" ry="18" />
-  <text x="775" y="682" class="text">Profile Latency</text>
-  <text x="775" y="710" class="small">&amp; Metrics</text>
+  <!-- 3a. Heal Compilation Card (Left) -->
+  <rect x="150" y="330" width="250" height="70" rx="12" fill="url(#heal-grad)" stroke="#f43f5e" stroke-width="2" filter="url(#glow-rose)" />
+  <text x="275" y="360" class="card-title">Heal Compilation</text>
+  <text x="275" y="383" class="card-sub">Extracts error logs &amp; formats prompt</text>
 
-  <rect class="diamond" x="920" y="650" width="250" height="120" transform="rotate(45 1045 710)" />
-  <text x="1045" y="692" class="text">Compare</text>
-  <text x="1045" y="718" class="small">New &lt; Best?</text>
+  <!-- Arrow: Heal Compilation -> LLM Optimizer (Curved Loopback) -->
+  <path d="M 275 330 L 275 255 L 450 255" class="arrow-fail" />
 
-  <rect class="box" x="1230" y="650" width="130" height="82" rx="18" ry="18" />
-  <text x="1295" y="686" class="text">Update</text>
-  <text x="1295" y="713" class="small">Best</text>
+  <!-- Compile OK Arrow -->
+  <path d="M 600 410 L 600 450" class="arrow-success" />
+  <text x="618" y="432" class="label-success">OK</text>
 
-  <!-- Bottom row -->
-  <rect class="box" x="1230" y="820" width="130" height="82" rx="18" ry="18" />
-  <text x="1295" y="856" class="text">Loop</text>
-  <text x="1295" y="883" class="small">More Iterations?</text>
+  <!-- 4. Verify Correctness Decision Diamond -->
+  <polygon points="600,450 690,495 600,540 510,495" fill="#1e293b" stroke="#fbbf24" stroke-width="2" filter="url(#glow-amber)" />
+  <text x="600" y="490" class="card-title-dark">Verify?</text>
+  <text x="600" y="510" class="card-sub-dark">(Correctness)</text>
 
-  <rect class="box" x="650" y="820" width="250" height="82" rx="18" ry="18" />
-  <text x="775" y="856" class="text">Save Best Code</text>
-  <text x="775" y="883" class="small">to Output File</text>
+  <!-- Verify Fail Arrow -->
+  <path d="M 690 495 L 800 495" class="arrow-fail" />
+  <text x="745" y="483" class="label-fail">Fail</text>
 
-  <rect class="box" x="340" y="820" width="220" height="82" rx="18" ry="18" />
-  <text x="450" y="856" class="text">Clean Temp</text>
-  <text x="450" y="883" class="small">Files</text>
+  <!-- 4a. Heal Logic Discrepancy Card (Right) -->
+  <rect x="800" y="460" width="250" height="70" rx="12" fill="url(#heal-grad)" stroke="#f43f5e" stroke-width="2" filter="url(#glow-rose)" />
+  <text x="925" y="490" class="card-title">Heal Logic</text>
+  <text x="925" y="513" class="card-sub">Extracts mismatches &amp; formats prompt</text>
 
-  <rect class="term" x="80" y="820" width="180" height="82" rx="24" ry="24" />
-  <text x="170" y="856" class="text">End</text>
-  <text x="170" y="883" class="small">End Optimization</text>
+  <!-- Arrow: Heal Logic -> LLM Optimizer (Curved Loopback) -->
+  <path d="M 925 460 L 925 240 L 750 240" class="arrow-fail" />
 
-  <!-- Arrows -->
-  <path class="arrow" d="M300 167 L350 167" />
-  <path class="arrow" d="M600 167 L650 167" />
-  <path class="arrow" d="M900 167 L970 167" />
-  <path class="arrow-warn" d="M1065 218 L1065 320" />
-  <path class="arrow" d="M1085 167 L1210 167" />
-  <path class="arrow-warn" d="M1055 402 L1070 480" />
-  <path class="arrow" d="M1040 540 L880 360" />
-  <path class="arrow-ok" d="M1070 600 L1070 650" />
-  <path class="arrow-ok" d="M1150 690 L1230 690" />
-  <path class="arrow" d="M1295 732 L1295 820" />
-  <path class="arrow" d="M1230 861 L900 861" />
-  <path class="arrow" d="M650 861 L560 861" />
-  <path class="arrow" d="M340 861 L260 861" />
-  <path class="arrow" d="M170 820 L170 214" />
+  <!-- Verify OK Arrow -->
+  <path d="M 600 540 L 600 580" class="arrow-success" />
+  <text x="618" y="562" class="label-success">OK</text>
 
-  <!-- Feedback loop labels -->
-  <text x="1110" y="300" class="note">Fail</text>
-  <text x="1130" y="470" class="note">Fail</text>
-  <text x="1185" y="655" class="note">Yes</text>
-  <text x="1200" y="804" class="note">No</text>
-  <text x="1180" y="834" class="note">Yes</text>
-  <text x="600" y="826" class="note">No</text>
+  <!-- 5. Profile GPU Card -->
+  <rect x="450" y="580" width="300" height="70" rx="12" fill="url(#success-grad)" stroke="#10b981" stroke-width="2" filter="url(#glow-emerald)" />
+  <text x="600" y="610" class="card-title">Profile GPU (NSYS/NCU)</text>
+  <text x="600" y="633" class="card-sub">Measures latency &amp; extracts metrics</text>
+
+  <!-- Arrow: Profile GPU -> New < Best? -->
+  <path d="M 600 650 L 600 690" class="arrow-standard" />
+
+  <!-- 6. Better? Decision Diamond -->
+  <polygon points="600,690 690,735 600,780 510,735" fill="#1e293b" stroke="#fbbf24" stroke-width="2" filter="url(#glow-amber)" />
+  <text x="600" y="730" class="card-title-dark">Better?</text>
+  <text x="600" y="750" class="card-sub-dark">(New &lt; Best)</text>
+
+  <!-- Better Yes Arrow -->
+  <path d="M 690 735 L 790 735" class="arrow-success" />
+  <text x="740" y="723" class="label-success">Yes</text>
+
+  <!-- 6a. Update Best Kernel Card (Right) -->
+  <rect x="790" y="700" width="220" height="70" rx="12" fill="url(#card-grad)" stroke="#38bdf8" stroke-width="2" filter="url(#glow-sky)" />
+  <text x="900" y="730" class="card-title">Update Best Kernel</text>
+  <text x="900" y="753" class="card-sub">Saves code &amp; updates baseline</text>
+
+  <!-- Arrow: Update Best Kernel -> Iterate? (Curved) -->
+  <path d="M 900 770 L 900 875 L 690 875" class="arrow-standard" />
+
+  <!-- Better No Arrow -->
+  <path d="M 600 780 L 600 830" class="arrow-standard" />
+  <text x="615" y="808" class="label-standard">No</text>
+
+  <!-- 7. Iterate? Decision Diamond -->
+  <polygon points="600,830 690,875 600,920 510,875" fill="#1e293b" stroke="#fbbf24" stroke-width="2" filter="url(#glow-amber)" />
+  <text x="600" y="870" class="card-title-dark">Iterate?</text>
+  <text x="600" y="890" class="card-sub-dark">(iters left?)</text>
+
+  <!-- Iterate Yes Arrow (Loopback to LLM Optimizer on the far left) -->
+  <path d="M 510 875 L 70 875 L 70 220 L 450 220" class="arrow-standard" />
+  <text x="110" y="863" class="label-standard">Yes (More Iterations)</text>
+
+  <!-- Iterate No Arrow -->
+  <path d="M 600 920 L 600 965" class="arrow-standard" />
+  <text x="615" y="943" class="label-standard">No</text>
+
+  <!-- 8. Save & Finalize Card -->
+  <rect x="450" y="965" width="300" height="70" rx="12" fill="url(#card-grad)" stroke="#38bdf8" stroke-width="2" filter="url(#glow-sky)" />
+  <text x="600" y="995" class="card-title">Save &amp; Finalize</text>
+  <text x="600" y="1018" class="card-sub">Outputs optimized kernel &amp; cleans temp files</text>
+
+  <!-- Arrow: Save & Finalize -> END -->
+  <path d="M 600 1035 L 600 1080" class="arrow-standard" />
+
+  <!-- 9. END Capsule -->
+  <rect x="510" y="1080" width="180" height="50" rx="25" fill="#0f172a" stroke="#10b981" stroke-width="2" filter="url(#glow-emerald)" />
+  <text x="600" y="1110" class="term-text">END</text>
 </svg>

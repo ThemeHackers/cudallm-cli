@@ -6,6 +6,8 @@ import re
 from rich.console import Console
 from rich.panel import Panel
 from rich.markup import escape
+from rich.live import Live
+from .terminal_manager import TerminalManager
 
 from .network_security import build_auth_headers, validate_llm_endpoint
 
@@ -79,7 +81,7 @@ class LLMClient:
                 if "ollama" in self.url.lower() or "11434" in self.url:
                     self.url = self.url.rstrip('/') + '/api/generate'
                 else:
-                    self.url = self.url.rstrip('/') + '/completion'
+                    self.url = self.url.rstrip('/') + '/v1/completions'
         except Exception:
             pass
 
@@ -110,14 +112,57 @@ class LLMClient:
         if not snippet:
             return False
 
-        markers = [
+
+        clean_text = re.sub(r'//.*$', '', snippet, flags=re.MULTILINE)
+        clean_text = re.sub(r'/\*.*?\*/', '', clean_text, flags=re.DOTALL)
+       
+        clean_text = re.sub(r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\'', '', clean_text)
+        
+        lines = [line.strip() for line in clean_text.splitlines() if line.strip()]
+        if not lines:
+            return False
+
+
+        code_line_count = 0
+        valid_endings = (';', '{', '}', ',', '\\')
+        for line in lines:
+            if line.startswith('#'):
+                code_line_count += 1
+            elif line.endswith(valid_endings):
+                code_line_count += 1
+           
+            elif re.match(r'^(if|for|while|else|do)\b', line):
+                code_line_count += 1
+            
+            elif line.endswith(':'):
+                code_line_count += 1
+
+        code_ratio = code_line_count / len(lines)
+
+      
+        stop_words = [
+            "the", "is", "are", "was", "were", "have", "has", "had", 
+            "would", "could", "should", "they", "them", "their", "you", "your", 
+            "we", "our", "about", "because", "here", "there", "why", "how", 
+            "what", "who", "which", "please", "okay", "sorry", "thank", "thanks"
+        ]
+        stop_word_pattern = r'\b(' + '|'.join(stop_words) + r')\b'
+        prose_word_matches = re.findall(stop_word_pattern, clean_text, re.IGNORECASE)
+
+        cuda_markers = [
             "__global__", "__device__", "__host__", "#include",
             "cudaMalloc", "cudaMemcpy", "dim3", "<<<", ">>>"
         ]
-        if any(marker in snippet for marker in markers):
-            return True
+        has_cuda_marker = any(marker in snippet for marker in cuda_markers)
+        has_function_signature = re.search(r"\b(?:void|int|float|double|__global__|__device__)\s+\w+\s*\([^)]*\)\s*{?", clean_text) is not None
 
-        return re.search(r"\b(?:void|int|float|double|__global__|__device__)\s+\w+\s*\([^)]*\)\s*{", snippet) is not None
+      
+        if code_ratio < 0.4:
+            return False
+        if len(prose_word_matches) > 3:
+            return False
+
+        return has_cuda_marker or has_function_signature
         
     def _extract_kernels(self, code):
         kernels = []
@@ -134,6 +179,39 @@ class LLMClient:
                 unique_kernels.append(k)
         return unique_kernels
 
+    def _summarize_diagnostics(self, diagnostics_text, max_significant_lines=10, tail_lines=4):
+        lines = [line.rstrip() for line in diagnostics_text.splitlines() if line.strip()]
+        if not lines:
+            return "(no diagnostics available)"
+
+        significant_patterns = re.compile(
+            r"\b(error|warning|fatal|undefined|cannot|expected|not found|mismatch|failed|invalid|no such)\b",
+            re.IGNORECASE,
+        )
+
+        summary_lines = []
+        seen = set()
+        for line in lines:
+            normalized = re.sub(r"\s+", " ", line).strip()
+            if significant_patterns.search(normalized) or normalized.startswith("==ERROR=="):
+                if normalized not in seen:
+                    seen.add(normalized)
+                    summary_lines.append(normalized)
+            if len(summary_lines) >= max_significant_lines:
+                break
+
+        if not summary_lines:
+            summary_lines = lines[:max_significant_lines]
+
+        if len(lines) > len(summary_lines):
+            tail = lines[-tail_lines:]
+            tail = [re.sub(r"\s+", " ", line).strip() for line in tail]
+            condensed = summary_lines + ["...", *tail]
+        else:
+            condensed = summary_lines
+
+        return "\n".join(condensed)
+
     def generate_code(self, prompt, max_tokens=4096, status_callback=None, early_terminate=True, prefill=False):
         start_time = time.time()
 
@@ -144,7 +222,7 @@ class LLMClient:
 
         payload = {
             "prompt": prompt,
-            "n_predict": max_tokens,
+            "max_tokens": max_tokens,
             "temperature": 0.2,
             "repeat_penalty": 1.25,
             "stop": ["<|im_end|>", "<|endoftext|>"],
@@ -206,6 +284,8 @@ class LLMClient:
         has_passed_opening_line = False
         has_printed_code_header = False
         stream_buffer = ""
+        think_buffer = ""
+        think_live = None
 
         last_line = None
         repeat_count = 0
@@ -281,12 +361,20 @@ class LLMClient:
                         if "<think>" in result_text and "</think>" not in result_text:
                             in_think = True
                             if not has_printed_think_header:
-                                console.print("\n" + "=" * 45 + " AI REASONING PROCESS " + "=" * 45, style="bold cyan")
+                                think_live = Live(
+                                    Panel("", title="[bold cyan]AI Reasoning Process[/bold cyan]", border_style="dim", box=TerminalManager.get_box_style(), style="dim cyan"),
+                                    console=console,
+                                    refresh_per_second=10,
+                                    transient=False
+                                )
+                                think_live.start()
                                 has_printed_think_header = True
                         elif "</think>" in result_text:
                             in_think = False
                             if not has_printed_think_footer:
-                                console.print("\n" + "=" * 114 + "\n", style="bold cyan")
+                                if think_live:
+                                    think_live.stop()
+                                    think_live = None
                                 has_printed_think_footer = True
 
                         text_no_think = result_text
@@ -301,7 +389,9 @@ class LLMClient:
                             if not in_code_block:
                                 in_code_block = True
                                 if not has_printed_think_footer:
-                                    console.print("\n" + "=" * 114 + "\n", style="bold cyan")
+                                    if think_live:
+                                        think_live.stop()
+                                        think_live = None
                                     has_printed_think_footer = True
                                 if not has_printed_code_header:
                                     console.print("[bold green]Writing Optimized CUDA Code...[/bold green]\n")
@@ -320,8 +410,11 @@ class LLMClient:
                                 if tag in clean_content:
                                     clean_content = clean_content.replace(tag, "")
                             if clean_content:
-                                sys.stdout.write(f"\033[96m{clean_content}\033[0m")
-                                sys.stdout.flush()
+                                think_buffer += clean_content
+                                if think_live:
+                                    think_live.update(
+                                        Panel(think_buffer, title="[bold cyan]AI Reasoning Process[/bold cyan]", border_style="dim", box=TerminalManager.get_box_style(), style="dim cyan")
+                                    )
                         elif in_code_block:
                             if not has_passed_opening_line:
                                 if "\n" in content:
@@ -377,12 +470,11 @@ class LLMClient:
                     if "```" in result_text:
                         console.print("\n[bold green]Writing Optimized CUDA Code...[/bold green]\n")
                     else:
-                        console.print("\n" + "=" * 45 + " AI REASONING PROCESS " + "=" * 45, style="bold cyan")
-                        sys.stdout.write(f"\033[96m{result_text}\033[0m")
-                        sys.stdout.flush()
-                        console.print("\n" + "=" * 114 + "\n", style="bold cyan")
+                        console.print(Panel(result_text, title="[bold cyan]AI Reasoning Process[/bold cyan]", border_style="dim", box=TerminalManager.get_box_style(), style="dim cyan"))
                 elif in_think and not has_printed_think_footer:
-                    console.print("\n" + "=" * 114 + "\n", style="bold cyan")
+                    if think_live:
+                        think_live.stop()
+                        think_live = None
 
                 console.print(f"\n[bold green]Generation complete! Total tokens: {tokens_generated} (In {time.time() - start_time:.2f}s)[/bold green]")
 
@@ -422,6 +514,12 @@ class LLMClient:
                 border_style="red"
             ))
             return "", 0.0
+        finally:
+            if think_live:
+                try:
+                    think_live.stop()
+                except Exception:
+                    pass
 
     def create_optimization_prompt(self, code, env_info, target, best_time, flags):
         kernels = self._extract_kernels(code)
@@ -442,11 +540,12 @@ class LLMClient:
             
         system_prompt += (
             "CRITICAL INSTRUCTIONS:\n"
-            "1. First, write your step-by-step performance analysis and optimization plan inside a <think>...</think> tag block. Keep it highly technical and concise (max 200 words).\n"
-            "2. Second, write the final complete optimized CUDA code inside a ```cuda ... ``` markdown block.\n"
-            "3. Do NOT write any introduction, explanation, reasoning, or text outside the <think> or ```cuda blocks.\n"
-            "4. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
-            f"5. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided in the input code. Do NOT alter parameter types, as they are strictly benchmarked by an external host wrapper."
+            "1. Do not provide reasoning or commentary.\n"
+            "2. The final answer must be exactly one complete ```cuda ... ``` markdown block with the full optimized source.\n"
+            "3. Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block.\n"
+            "4. Start the final answer by continuing the CUDA code block immediately. Never narrate before the code fence.\n"
+            "5. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
+            f"6. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided in the input code. Do NOT alter parameter types, as they are strictly benchmarked by an external host wrapper."
         )
         
         user_prompt = f"Optimize the following CUDA code:\n\n```cuda\n{code}\n```"
@@ -471,18 +570,57 @@ class LLMClient:
             "You are a world-class CUDA compiler and debugging assistant. Your task is to fix compilation errors or correctness failures "
             "in the user's CUDA code.\n"
             "CRITICAL INSTRUCTIONS:\n"
-            "1. First, write your compilation error analysis and correction strategy inside a <think>...</think> tag block. Keep it concise.\n"
-            "2. Second, write the fixed, complete CUDA code inside a ```cuda ... ``` markdown block.\n"
-            "3. Do NOT write any introduction, explanation, reasoning, or text outside the <think> or ```cuda blocks.\n"
-            "4. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
-            f"5. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
+            "1. Do not provide reasoning or commentary.\n"
+            "2. The final answer must be exactly one complete ```cuda ... ``` markdown block with the full fixed source.\n"
+            "3. Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block.\n"
+            "4. Start the final answer by continuing the CUDA code block immediately. Never narrate before the code fence.\n"
+            "5. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
+            f"6. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
         )
         
         user_prompt = (
             f"This CUDA code failed to compile/verify:\n```cuda\n{code}\n```\n\n"
-            f"Error log:\n{error_log}\n\nPlease fix it so it compiles and is mathematically correct."
+            f"Error log summary:\n{self._summarize_diagnostics(error_log)}\n\n"
+            f"Raw error log:\n{error_log}\n\nPlease fix it so it compiles and is mathematically correct."
         )
         
+        return (
+            "<|im_start|>system\n"
+            f"{system_prompt}<|im_end|>\n"
+            "<|im_start|>user\n"
+            f"{user_prompt}<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+
+    def create_compile_repair_prompt(self, code, error_log, attempt_index=1, max_attempts=1):
+        kernels = self._extract_kernels(code)
+        if kernels:
+            kernel_list_str = ", ".join(kernels)
+            kernel_instruction = f"all kernels ({kernel_list_str})"
+        else:
+            kernel_instruction = "all kernels"
+
+        system_prompt = (
+            "You are a world-class CUDA compiler engineer. Repair the user's CUDA source so it compiles cleanly.\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Do not provide reasoning or commentary.\n"
+            "2. The final answer must be exactly one complete ```cuda ... ``` markdown block with the full corrected source.\n"
+            "3. Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block.\n"
+            "4. Prioritize the compiler diagnostics over the previous code. Fix the reported errors directly and preserve all unaffected logic.\n"
+            f"5. This is repair attempt {attempt_index}/{max_attempts}. If a previous repair failed, assume the last emitted code was still invalid and re-check the exact compiler diagnostics before returning code.\n"
+            "6. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, You MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
+            f"7. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
+        )
+
+        diagnostic_summary = self._summarize_diagnostics(error_log)
+
+        user_prompt = (
+            f"This CUDA code failed to compile:\n```cuda\n{code}\n```\n\n"
+            f"Compiler diagnostics summary:\n{diagnostic_summary}\n\n"
+            f"Raw compiler diagnostics:\n{error_log}\n\n"
+            "Return a corrected full CUDA file that resolves those compile errors."
+        )
+
         return (
             "<|im_start|>system\n"
             f"{system_prompt}<|im_end|>\n"
@@ -524,7 +662,7 @@ class LLMClient:
 
         payload = {
             "prompt": system_prompt + "\n" + user_prompt,
-            "n_predict": max_tokens,
+            "max_tokens": max_tokens,
             "temperature": 0.0,
             "stream": False
         }

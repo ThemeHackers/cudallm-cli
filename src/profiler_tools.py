@@ -27,9 +27,9 @@ def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
         return {"error": "ncu not found"}
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = output_base or f'ncu_expert_{ts}'
-    cmd = [ncu, '--csv', '--output', base, exe]
+    cmd = [ncu, '--csv', '-o', base, exe]
     if metrics:
-        cmd = [ncu, '--metrics', metrics, '--csv', '--output', base, exe]
+        cmd = [ncu, '--metrics', metrics, '--csv', '-o', base, exe]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     out = res.stdout + res.stderr
     csv_path = f"{base}.csv"

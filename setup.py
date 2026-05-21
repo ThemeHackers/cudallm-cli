@@ -10,7 +10,7 @@ def read_requirements():
 	deps = []
 	for line in req_path.read_text(encoding="utf-8").splitlines():
 		item = line.strip()
-		if not item or item.startswith("#"):
+		if not item or item.startswith("#") or item.startswith("-"):
 			continue
 		deps.append(item)
 	return deps
