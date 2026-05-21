@@ -112,6 +112,38 @@ class CLIDefaultsTest(unittest.TestCase):
             self.assertEqual(path, server_bin)
             self.assertNotIn("llama_version", config)
 
+    def test_select_llama_asset_prefers_linux_cuda_131(self):
+        from src.cli import _select_llama_asset
+        from unittest.mock import patch
+
+        assets = [
+            {"name": "llama-b9264-bin-win-cuda-12.4-x64.zip"},
+            {"name": "llama-b9264-bin-win-cuda-13.1-x64.zip"},
+            {"name": "llama-b9264-bin-ubuntu-x64.tar.gz"},
+            {"name": "llama-b9264-bin-ubuntu-cuda-13.1-x64.tar.gz"},
+        ]
+
+        with patch("src.cli._get_release_assets", return_value=assets):
+            asset = _select_llama_asset("b9264", 13.0, is_windows=False)
+
+        self.assertIsNotNone(asset)
+        self.assertEqual(asset["name"], "llama-b9264-bin-ubuntu-cuda-13.1-x64.tar.gz")
+
+    def test_select_llama_asset_falls_back_to_generic_linux_cuda(self):
+        from src.cli import _select_llama_asset
+        from unittest.mock import patch
+
+        assets = [
+            {"name": "llama-b9264-bin-ubuntu-x64.tar.gz"},
+            {"name": "llama-b9264-bin-ubuntu-cuda-x64.tar.gz"},
+        ]
+
+        with patch("src.cli._get_release_assets", return_value=assets):
+            asset = _select_llama_asset("b9264", 13.0, is_windows=False)
+
+        self.assertIsNotNone(asset)
+        self.assertEqual(asset["name"], "llama-b9264-bin-ubuntu-cuda-x64.tar.gz")
+
 
 if __name__ == "__main__":
     unittest.main()

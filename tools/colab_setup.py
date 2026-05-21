@@ -1,4 +1,4 @@
-#/usr/bin/env python3
+#!/usr/bin/env python3
 
 import os
 import sys
@@ -8,6 +8,10 @@ import socket
 import shutil
 import shlex
 import re
+import json
+import urllib.request
+
+import requests
 
 
 def detect_cuda_version():
@@ -86,47 +90,35 @@ def ensure_python_dependencies(repo_root):
 
     cuda_version = detect_cuda_version()
 
-  
     if int(cuda_version) >= 130:
-        print(f"[INFO] CUDA {cuda_version} is very new. Building llama-cpp-python from source for best compatibility...")
+        wheel_candidates = ["131", "126", "121"]
+    else:
+        wheel_candidates = [cuda_version, "126", "121"]
+
+    code = 1
+    err = ""
+    tried_candidates = []
+    for candidate in wheel_candidates:
+        if candidate in tried_candidates:
+            continue
+        tried_candidates.append(candidate)
+        print(f"[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels for CUDA {candidate}...")
+        cuda_llama_cmd = (
+            f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
+            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu{candidate}'
+        )
+        code, _, err = run_command(cuda_llama_cmd)
+        if code == 0:
+            break
+
+    if code != 0:
+        print("[WARNING] All pre-built wheels failed, falling back to compile from source...")
         print("[INFO] This may take 10-20 minutes, please be patient...")
         cuda_llama_cmd = (
             f'CMAKE_ARGS="-DGGML_CUDA=on" '
             f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary :all: llama-cpp-python'
         )
         code, _, err = run_command(cuda_llama_cmd)
-    else:
-        print(f"[INFO] Installing CUDA-enabled llama-cpp-python using pre-built wheels for CUDA {cuda_version}...")
-        cuda_llama_cmd = (
-            f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
-            f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu{cuda_version}'
-        )
-        code, _, err = run_command(cuda_llama_cmd)
-
-        if code != 0:
-            print(f"[WARNING] Pre-built wheel for cu{cuda_version} failed, trying cu126 as fallback...")
-            cuda_llama_cmd = (
-                f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
-                f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126'
-            )
-            code, _, err = run_command(cuda_llama_cmd)
-
-        if code != 0:
-            print(f"[WARNING] Pre-built wheel for cu126 failed, trying cu121 as fallback...")
-            cuda_llama_cmd = (
-                f'{sys.executable} -m pip install --no-cache-dir llama-cpp-python '
-                f'--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121'
-            )
-            code, _, err = run_command(cuda_llama_cmd)
-
-        if code != 0:
-            print("[WARNING] All pre-built wheels failed, falling back to compile from source...")
-            print("[INFO] This may take 10-20 minutes, please be patient...")
-            cuda_llama_cmd = (
-                f'CMAKE_ARGS="-DGGML_CUDA=on" '
-                f'{sys.executable} -m pip install --no-cache-dir --force-reinstall --no-binary :all: llama-cpp-python'
-            )
-            code, _, err = run_command(cuda_llama_cmd)
 
     if code != 0:
         print(f"[ERROR] Failed to install CUDA-enabled llama-cpp-python: {err}")
@@ -152,7 +144,6 @@ def ensure_python_dependencies(repo_root):
         print("[ERROR] Missing required Python packages for server backend (fastapi/uvicorn/huggingface_hub/llama_cpp).")
         print(f"[DETAIL] {err}")
         sys.exit(1)
-
 def run_command(cmd, shell=True, timeout=None):
     print(f"[RUNNING] {cmd}")
     try:
@@ -169,6 +160,128 @@ def run_command(cmd, shell=True, timeout=None):
         return res.returncode, res.stdout, res.stderr
     except subprocess.TimeoutExpired as e:
         return -1, e.stdout or "", e.stderr or "Timeout expired"
+
+
+def get_latest_llama_tag():
+    api_url = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+    req = urllib.request.Request(
+        api_url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            tag = data.get("tag_name")
+            if tag and tag.startswith("b") and tag[1:].isdigit():
+                return tag
+    except Exception:
+        pass
+    return "b9222"
+
+
+def get_release_assets(tag):
+    api_url = f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
+    req = urllib.request.Request(
+        api_url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data.get("assets", [])
+    except Exception:
+        return []
+
+
+def parse_cuda_version(cuda_version_str):
+    try:
+        return float(str(cuda_version_str).split()[0])
+    except (ValueError, IndexError, TypeError):
+        return 12.4
+
+
+def select_release_asset(tag, cuda_version, is_windows=False):
+    assets = get_release_assets(tag)
+    if not assets:
+        return None
+
+    version_token = "cuda-13.1" if cuda_version >= 13.0 else "cuda-12.4"
+    platform_tokens = ["win"] if is_windows else ["ubuntu", "linux"]
+
+    for asset in assets:
+        name = asset.get("name", "")
+        lowered = name.lower()
+        if "cuda" not in lowered:
+            continue
+        if version_token not in lowered:
+            continue
+        if not any(token in lowered for token in platform_tokens):
+            continue
+        return asset
+
+    return None
+
+
+def download_and_extract_asset(asset, dest_dir):
+    url = asset.get("browser_download_url")
+    name = asset.get("name", "download")
+    if not url:
+        raise RuntimeError(f"Release asset {name} does not expose a download URL")
+
+    archive_filepath = os.path.join(dest_dir, name)
+    response = requests.get(url, stream=True, timeout=15)
+    if response.status_code != 200:
+        raise RuntimeError(f"HTTP Status {response.status_code} for {name}")
+
+    with open(archive_filepath, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+    if name.lower().endswith(".zip"):
+        import zipfile
+
+        with zipfile.ZipFile(archive_filepath, "r") as zip_ref:
+            zip_ref.extractall(dest_dir)
+    elif name.lower().endswith((".tar.gz", ".tgz")):
+        import tarfile
+
+        with tarfile.open(archive_filepath, "r:gz") as tar_ref:
+            tar_ref.extractall(dest_dir)
+    else:
+        raise RuntimeError(f"Unsupported archive format for {name}")
+
+    if os.path.exists(archive_filepath):
+        os.remove(archive_filepath)
+
+
+def find_executable(dest_dir, bin_name):
+    direct_path = os.path.join(dest_dir, bin_name)
+    if os.path.exists(direct_path):
+        return direct_path
+
+    for root, _, files_list in os.walk(dest_dir):
+        if bin_name in files_list:
+            return os.path.join(root, bin_name)
+    return None
+
+
+def build_llama_server_from_source():
+    if not os.path.exists("/content/llama.cpp"):
+        code, out, err = run_command("git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp")
+        if code != 0:
+            raise RuntimeError(f"Failed to clone llama.cpp: {err}")
+
+    os.makedirs("/content/llama.cpp/build", exist_ok=True)
+    code, out, err = run_command("cmake -B /content/llama.cpp/build -S /content/llama.cpp -DGGML_CUDA=ON")
+    if code != 0:
+        raise RuntimeError(f"CMake configuration failed: {err}")
+
+    code, out, err = run_command("cmake --build /content/llama.cpp/build --config Release --target llama-server -j$(nproc)")
+    if code != 0:
+        raise RuntimeError(f"Build failed: {err}")
+
+    return "/content/llama.cpp/build/bin/llama-server"
 
 def is_port_open(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
