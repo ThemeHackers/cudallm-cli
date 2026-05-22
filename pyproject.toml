@@ -22,6 +22,8 @@ dependencies = [
     "rich",
     "psutil",
     "nvidia-ml-py",
+    "langchain",
+    "openai",
 ]
 
 [project.optional-dependencies]

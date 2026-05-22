@@ -15,6 +15,7 @@ from .sandbox import CUDASandbox
 from .llm_client import LLMClient
 from .profiler_tools import run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
 from .network_security import validate_llm_endpoint
+from .docker_sandbox import run_in_docker
 from .terminal_manager import TerminalManager
 from . import platform_info
 import psutil
@@ -1051,6 +1052,31 @@ def help():
     Display plain text help guide for cudallm CLI tool.
     """
     print_cli_help()
+
+
+@main.command(name='sandbox-run')
+@click.option('--image', required=True, help='Docker image to use for sandbox execution')
+@click.option('--cmd', 'cmd_text', required=True, help='Command to run inside the container')
+@click.option('--mount', multiple=True, help='Volume mount in host:container form (repeatable)')
+@click.option('--workdir', default='/workspace', help='Working directory inside the container')
+@click.option('--mount-cwd/--no-mount-cwd', default=True, help='Mount the current directory into the container at --workdir')
+@click.option('--timeout', default=600, type=int, help='Timeout in seconds')
+@click.option('--mem-limit-mb', default=None, type=int, help='Optional memory limit in MB')
+def sandbox_run(image, cmd_text, mount, workdir, mount_cwd, timeout, mem_limit_mb):
+    volumes = {}
+    if mount_cwd:
+        volumes[os.getcwd()] = workdir
+    for item in mount:
+        if ':' not in item:
+            raise click.ClickException(f"Invalid mount '{item}'. Expected host:container")
+        host, container = item.split(':', 1)
+        volumes[host] = container
+
+    result = run_in_docker(image=image, cmd=cmd_text, volumes=volumes or None, timeout=timeout, mem_limit_mb=mem_limit_mb)
+    console.print(Panel(result.get('stdout', '') or '', title='Docker sandbox stdout'))
+    if result.get('stderr'):
+        console.print(Panel(result.get('stderr', ''), title='Docker sandbox stderr', border_style='yellow'))
+    console.print(f"[bold]rc:[/bold] {result.get('rc')} | [bold]timed_out:[/bold] {result.get('timed_out')} | [bold]killed_by_limit:[/bold] {result.get('killed_by_limit')}")
 
 
 @main.command()
