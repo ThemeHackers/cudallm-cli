@@ -30,7 +30,8 @@ def main():
                 print(f"- {t.name}: {t.description}")
             return
 
-    response = agent.run(args.instruction)
+    res = agent.invoke({"messages": [("user", args.instruction)]})
+    response = res["messages"][-1].content
     print("Agent response:\n", response)
 
 

@@ -397,25 +397,6 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertIn("-o", cmd)
         self.assertNotIn("--output", cmd)
 
-    @patch("src.discover.os.path.exists")
-    @patch("src.discover.glob.glob")
-    @patch("src.discover.shutil.which")
-    def test_python_backend_discovery_prefers_tools_server(self, mock_which, mock_glob, mock_exists):
-        from src.discover import find_llm_server_path
-
-        mock_which.return_value = None
-        def exists_side_effect(path):
-            p = str(path).replace("\\", "/")
-            return p.endswith("/project") or p.endswith("/project/tools/server.py")
-        mock_exists.side_effect = exists_side_effect
-
-        def glob_side_effect(pattern, recursive=False):
-            return []
-
-        mock_glob.side_effect = glob_side_effect
-
-        result = find_llm_server_path(r"C:\project")
-        self.assertTrue(result.replace("\\", "/").endswith("tools/server.py"))
 
     @patch("src.discover.find_ncu_path")
     @patch("src.profiler_tools.subprocess.run")

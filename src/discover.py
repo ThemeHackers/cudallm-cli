@@ -188,37 +188,12 @@ def find_nsys_path():
             return _normalize_ext(found)
     return None
 
-def find_llm_backend_path(project_dir=None):
-    candidates = []
-    if project_dir and os.path.exists(project_dir):
-        candidates.extend([
-            os.path.join(project_dir, "tools", "server.py"),
-            os.path.join(project_dir, "server.py"),
-        ])
-
-    if os.name != 'nt':
-        candidates.extend([
-            "/content/server.py",
-            "/content/cudallm-cli/tools/server.py",
-        ])
-
-    found = _pick_first_existing(candidates)
-    if found:
-        return _normalize_ext(found)
-    return None
-
-
-def find_llm_server_path(project_dir=None):
-    """Backward-compatible wrapper for older callers/config keys."""
-    return find_llm_backend_path(project_dir)
-
 def discover_tool_paths(project_dir=None):
     return {
         'nvcc_path': find_nvcc_path(),
         'nvidia_smi_path': find_nvidia_smi_path(),
         'ncu_path': find_ncu_path(),
         'nsys_path': find_nsys_path(),
-        'llm_server_path': find_llm_backend_path(project_dir),
     }
 
 def find_cmake_path():

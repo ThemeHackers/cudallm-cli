@@ -27,10 +27,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gpu = [
-    "torch",
-    "torchvision",
-]
 dev = [
     "pytest",
 ]

@@ -153,18 +153,6 @@ nsys --version
      cudallm init
      cudallm doctor
      ```
-
-### Optional GPU Extras (PyTorch + CUDA)
-
-If you want the optional GPU extras (e.g., for the transformers fallback backend on Windows), install them with:
-```powershell
-# Default installation
-pip install -e ".[gpu]"
-
-# On Windows, to ensure PyTorch has CUDA support, install from PyTorch's custom index:
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126 --force-reinstall
-```
-
 ---
 
 ## Quick Start
@@ -196,7 +184,8 @@ cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto
 | `init` | None | None | Scans system paths, locates compiler/profiler executables, and persists configuration. |
 | `doctor` / `check` | None | None | Displays a clean summary table of discovered paths and GPU capability. |
 | `setup-gpu` | None | `--dry-run`, `--force-reinstall` | Verifies environment readiness for GPU kernel compiling. Bypasses llama-cpp-python installation. |
-| `serve` | None | `--host`, `--port`, `--repo`, `--file`, `--local-model`, `--use-cuda`, `--ngl`, `--ctx`, `--parallel`, `--no-update` | Checks LM Studio connection status or displays startup instructions. |
+| `serve` | None | `--host`, `--port`, `--public-url`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--allow-unsafe-network`, `--reuse-port` | Checks LM Studio connection status or displays startup instructions. |
+| `agent` | None | `--instruction`, `--llm-url`, `--llm-api-key`, `--llm-api-key-file`, `--insecure` | Runs the LangChain-based autonomous performance engineering agent. |
 | `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Runs the iterative optimization agent. Supports dry runs, folder batches, custom compilers flags, and NVTX injections. |
 | `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Performs advanced profiling on a compiled binary, identifies hotspots, runs deep NCU sweeps, and outputs LLM analyses. |
 | `audit` | `<file_or_folder>` | `--markdown`, `--recursive/--no-recursive`, `--llm-url` | Performs a static structural audit on CUDA kernels using LLM prompts. Can output reports in Markdown format. |
@@ -242,26 +231,43 @@ cudallm expert ./my_cuda_binary.exe --auto-nvtx --rerun
 
 ---
 
-## Networking & Secure Deployment
+### 3. LangChain Autonomous Performance Agent
+The `cudallm agent` command launches an autonomous agent running on LangChain 1.x and LangGraph. This agent is equipped with low-level GPU tool bindings (`compile_cuda`, `profile_system`, `profile_kernel`, and `summarize_profile`) to solve complex performance engineering instructions:
 
-`cudallm serve` is built to run securely on various environments:
+* **Instruction Execution**: The agent iteratively decides which tools to invoke based on user prompts.
+* **Tool Set**:
+  * `compile_cuda`: Compiles code with `nvcc`.
+  * `profile_system`: Runs system-wide profiling via `nsys`.
+  * `profile_kernel`: Gathers kernel execution metrics using `ncu`.
+  * `summarize_profile`: Provides detailed human-readable summary of profiling reports.
 
-### Wildcard Interfaces
-Expose the server on local network interfaces using `--host 0.0.0.0`. When doing this, specify `--public-url` so other agents can resolve client routes:
+Example command:
 ```powershell
-cudallm serve --host 0.0.0.0 --port 1234 --public-url http://192.168.1.100:1234/v1/completions
+cudallm agent --instruction "Compile examples/vector_add.cu and profile it with nsys and ncu"
 ```
 
-### Security Credentials
-To prevent unauthorized access, network-facing wildcards require either API Key authentication or TLS setup. You can bypass this check using `--allow-unsafe-network`.
+---
 
-* **API Key Auth**:
+## Connection Configuration & Probing
+
+The `cudallm serve` command is a helper command used to verify connectivity to your LM Studio server or configure client endpoints:
+
+### Checking LM Studio Status
+To probe the status of LM Studio and verify loaded models:
+```powershell
+cudallm serve
+```
+
+### Remote/Local Network Overrides
+If LM Studio or your LLM server is hosted on a different machine or requires authentication, you can test and persist client endpoints:
+* **Custom URL & Host**:
   ```powershell
-  cudallm serve --host 0.0.0.0 --api-key-file .\secrets\keys.txt
+  cudallm serve --host 192.168.1.100 --port 1234
   ```
-* **TLS Encryption**:
+* **API Key & TLS Verification**:
+  Ensure secure connections when accessing remote endpoints:
   ```powershell
-  cudallm serve --host 0.0.0.0 --ssl-key-file .\secrets\server.key --ssl-cert-file .\secrets\server.crt
+  cudallm serve --public-url https://my-remote-llm/v1/completions --api-key-file .\secrets\key.txt
   ```
 
 ---
@@ -300,7 +306,6 @@ Config parameters are persisted inside `config/config.json`. Below is the schema
   "nvidia_smi_path": "C:\\Windows\\system32\\nvidia-smi.exe",
   "ncu_path": "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\ncu.bat",
   "nsys_path": "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\host\\target-windows-x64\\nsys.exe",
-  "llm_server_path": "C:\\Users\\1com310568\\Downloads\\cudallm-cli\\llama-b9209-bin-win-cuda-12.4-x64\\llama-server.exe",
   "last_discovery_at": "2026-05-19T20:25:00"
 }
 ```
@@ -337,18 +342,8 @@ CUDA_ERROR_OUT_OF_MEMORY
 ```
 **Solution**:
 - Reduce batch size or model size
-- Use smaller GGUF quantization (Q4_K_M instead of Q8_0)
+- Use smaller GGUF quantization (Q4_K_M instead of Q8_0) in LM Studio
 - Close other GPU applications
-- Reduce `--ngl` parameter in `cudallm serve`
-
-**LLM Server Download Fails**
-```
-Failed to download model from HuggingFace
-```
-**Solution**:
-- Check internet connection
-- Use `--no-update` flag to skip auto-update
-- Manually download GGUF model and specify local path
 
 ### General Issues
 
@@ -358,15 +353,12 @@ If `ncu` or `nsys` show `Not Found`, run `cudallm init` to force a workspace pat
 **Empty NSYS Timelines**
 If `nsys` reports do not display GPU kernel profiles, run with `--profile-mode code` to enable programmatic compiler activation or instrument kernels with NVTX.
 
-**Wildcard Bind Failures**
-Ensure no other server instance binds to the specified port. Use `--reuse-port` on supporting host systems.
-
 **LLM Server Connection Refused**
 ```
 Connection refused to http://localhost:1234/v1/completions
 ```
 **Solution**:
-- Verify LM Studio local server is running and listening: `cudallm serve --port 1234`
+- Verify LM Studio local server is running and listening by running: `cudallm serve`
 - Check firewall settings
 - Verify port is not in use: `netstat -ano | findstr :1234` (Windows) or `lsof -i :1234` (Linux)
 
@@ -396,6 +388,20 @@ ncu --version
 nsys --version
 nvidia-smi
 python --version
+
+# Verify cudallm installation
+cudallm doctor
+cudallm init
+```
+
+**Linux**:
+```bash
+# Check all tools
+nvcc --version
+ncu --version
+nsys --version
+nvidia-smi
+python3 --version
 
 # Verify cudallm installation
 cudallm doctor

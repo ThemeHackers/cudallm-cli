@@ -10,7 +10,7 @@ import time
 import shutil
 import requests
 from datetime import datetime
-from .discover import check_environment, discover_tool_paths, find_llm_backend_path, find_ncu_path, find_nsys_path
+from .discover import check_environment, discover_tool_paths, find_ncu_path, find_nsys_path
 from .sandbox import CUDASandbox
 from .llm_client import LLMClient
 from .profiler_tools import run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
@@ -54,50 +54,6 @@ CUDA_EXTENSIONS = {".cu", ".cuh"}
 IGNORE_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "node_modules"}
 
 
-def _is_within_directory(base_dir, target_path):
-    base_dir = os.path.abspath(base_dir)
-    target_path = os.path.abspath(target_path)
-    try:
-        return os.path.commonpath([base_dir, target_path]) == base_dir
-    except ValueError:
-        return False
-
-
-def _extract_zip_safely(zip_ref, dest_dir):
-    for member in zip_ref.infolist():
-        member_path = os.path.join(dest_dir, member.filename)
-        if not _is_within_directory(dest_dir, member_path):
-            raise RuntimeError(f"Unsafe archive member path: {member.filename}")
-
-        if member.is_dir():
-            os.makedirs(member_path, exist_ok=True)
-            continue
-
-        os.makedirs(os.path.dirname(member_path), exist_ok=True)
-        with zip_ref.open(member, "r") as source, open(member_path, "wb") as target:
-            shutil.copyfileobj(source, target)
-
-
-def _extract_tar_safely(tar_ref, dest_dir):
-    for member in tar_ref.getmembers():
-        member_path = os.path.join(dest_dir, member.name)
-        if not _is_within_directory(dest_dir, member_path):
-            raise RuntimeError(f"Unsafe archive member path: {member.name}")
-
-        if member.isdir():
-            os.makedirs(member_path, exist_ok=True)
-            continue
-
-        if member.issym() or member.islnk() or member.ischr() or member.isblk() or member.isfifo():
-            raise RuntimeError(f"Unsupported archive member type: {member.name}")
-
-        source = tar_ref.extractfile(member)
-        if source is None:
-            raise RuntimeError(f"Unable to extract archive member: {member.name}")
-
-        os.makedirs(os.path.dirname(member_path), exist_ok=True)
-        with source, open(member_path, "wb") as target:
-            shutil.copyfileobj(source, target)
 
 
 def _probe_llm_server(test_url, headers, verify_tls):
@@ -285,152 +241,6 @@ def save_report(report_data, filepath):
         json.dump(report_data, f, indent=2)
 
 
-def _parse_cuda_version(cuda_version_str):
-    try:
-        return float(str(cuda_version_str).split()[0])
-    except (ValueError, IndexError, TypeError):
-        return 12.4
-
-
-def _get_latest_llama_tag():
-    import urllib.request
-
-    api_url = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-    req = urllib.request.Request(
-        api_url,
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            tag = data.get('tag_name')
-            if tag and tag.startswith('b') and tag[1:].isdigit():
-                return tag
-    except Exception:
-        pass
-    return "b9222"
-
-
-def _get_release_assets(tag):
-    import urllib.request
-
-    api_url = f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
-    req = urllib.request.Request(
-        api_url,
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            return data.get('assets', [])
-    except Exception:
-        return []
-
-
-def _select_llama_asset(tag, cuda_version, is_windows=False):
-    assets = _get_release_assets(tag)
-    if not assets:
-        return None
-
-    version_tokens = ["cuda-13.1", "cu131", "cuda131"] if cuda_version >= 13.0 else ["cuda-12.4", "cu124", "cuda124"]
-    platform_tokens = ["win"] if is_windows else ["ubuntu", "linux"]
-
-    best_asset = None
-    best_score = -1
-
-    for asset in assets:
-        name = asset.get('name', '')
-        lowered = name.lower()
-        score = 0
-
-        if 'cuda' not in lowered and 'cu' not in lowered:
-            continue
-
-        if tag.lower() in lowered:
-            score += 20
-
-        if any(token in lowered for token in platform_tokens):
-            score += 15
-        else:
-            continue
-
-        if any(token in lowered for token in version_tokens):
-            score += 25
-        elif 'cuda' in lowered or 'cu' in lowered:
-            score += 5
-
-        if lowered.endswith('.zip') or lowered.endswith('.tar.gz') or lowered.endswith('.tgz'):
-            score += 3
-
-        if not is_windows and ('ubuntu' in lowered or 'linux' in lowered):
-            score += 5
-
-        if score > best_score:
-            best_score = score
-            best_asset = asset
-
-    return best_asset
-
-
-def _download_and_extract_asset(asset, dest_dir):
-    import zipfile
-    import tarfile
-
-    url = asset.get('browser_download_url')
-    name = asset.get('name', 'download')
-    if not url:
-        raise RuntimeError(f"Release asset {name} does not expose a download URL")
-
-    archive_filepath = os.path.join(dest_dir, name)
-    response = requests.get(url, stream=True, timeout=15)
-    if response.status_code != 200:
-        raise RuntimeError(f"HTTP Status {response.status_code} for {name}")
-
-    with open(archive_filepath, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
-
-    if name.lower().endswith('.zip'):
-        with zipfile.ZipFile(archive_filepath, 'r') as zip_ref:
-            _extract_zip_safely(zip_ref, dest_dir)
-    elif name.lower().endswith(('.tar.gz', '.tgz')):
-        with tarfile.open(archive_filepath, 'r:gz') as tar_ref:
-            _extract_tar_safely(tar_ref, dest_dir)
-    else:
-        raise RuntimeError(f"Unsupported archive format for {name}")
-
-    if os.path.exists(archive_filepath):
-        os.remove(archive_filepath)
-
-
-def _find_executable(dest_dir, bin_name):
-    direct_path = os.path.join(dest_dir, bin_name)
-    if os.path.exists(direct_path):
-        return direct_path
-
-    for root, _, files_list in os.walk(dest_dir):
-        if bin_name in files_list:
-            return os.path.join(root, bin_name)
-    return None
-
-
-def _build_llama_server_from_source():
-    if not os.path.exists("/content/llama.cpp"):
-        code, out, err = run_command("git clone --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp")
-        if code != 0:
-            raise RuntimeError(f"Failed to clone llama.cpp: {err}")
-
-    os.makedirs("/content/llama.cpp/build", exist_ok=True)
-    code, out, err = run_command("cmake -B /content/llama.cpp/build -S /content/llama.cpp -DGGML_CUDA=ON")
-    if code != 0:
-        raise RuntimeError(f"CMake configuration failed: {err}")
-
-    code, out, err = run_command("cmake --build /content/llama.cpp/build --config Release --target llama-server -j$(nproc)")
-    if code != 0:
-        raise RuntimeError(f"Build failed: {err}")
-
-    return "/content/llama.cpp/build/bin/llama-server"
 
 def get_resources_table():
     
@@ -589,7 +399,7 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     table.add_row("Install Mode", install_mode)
     table.add_row("Config Location", CONFIG_PATH)
     table.add_row("Cache Directory", str(platform_info.get_cache_dir()))
-    table.add_row("─" * 25, "─" * 40)
+    table.add_row("-" * 25, "-" * 40)
     table.add_row("NVCC Toolchain", "Found" if env_status.get("nvcc_found") else "[ERROR] Not Found")
     table.add_row("NVIDIA SMI", "Found" if env_status.get("nvidia_smi_found") else "[ERROR] Not Found")
     table.add_row("Nsight Compute (ncu)", "Found" if env_status.get("ncu_found") else "[WARNING] Not Found (Fallback to timer)")
@@ -604,7 +414,6 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     table.add_row("NVIDIA SMI Path", str(env_status.get("nvidia_smi_path", "N/A")))
     table.add_row("Nsight Compute Path", str(env_status.get("ncu_path", "N/A")))
     table.add_row("Nsight Systems Path", str(env_status.get("nsys_path", "N/A")))
-    table.add_row("LLM Backend Script", str(config.get("llm_server_path", "N/A")))
 
     console.print(table)
 
@@ -626,10 +435,10 @@ cudallm check
     Alias for doctor.
 
 cudallm setup-gpu
-    Auto-detect GPU architectures, MSVC capability, and compile/install llama-cpp-python with CUDA support.
+    Verify environment readiness for GPU kernel compiling.
 
 cudallm serve [options]
-    Launch Python LLM backend (`tools/server.py`) with CUDA support.
+    Check LM Studio connection status or display startup instructions.
 
 cudallm optimize <file|folder> [options]
     Run the optimization loop: prompt the LLM, compile, profile, verify, and heal.
@@ -948,6 +757,55 @@ def doctor():
 @main.command(name='check')
 def check():
     render_environment_summary()
+
+@main.command()
+@click.option('--instruction', default="Compile src/example.cu and profile it with nsys and ncu", help="Instruction for the agent")
+@click.option('--llm-url', envvar='LLM_URL', default=None, help='Override the LLM backend URL')
+@click.option('--llm-api-key', envvar='LLM_API_KEY', default=None, help='Override the LLM API key')
+@click.option('--llm-api-key-file', envvar='LLM_API_KEY_FILE', default=None, type=click.Path(exists=True, dir_okay=False), help='Override the LLM API key file path')
+@click.option('--insecure', is_flag=True, help='Bypass HTTPS/TLS verification and allow insecure remote HTTP connections')
+def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure):
+    """Run LangChain-based autonomous performance engineering agent."""
+    from .langchain_agent import create_agent_with_llmclient
+    
+    config = load_config()
+    if llm_url:
+        config["llm_url"] = llm_url
+    if llm_api_key:
+        config["llm_api_key"] = llm_api_key
+    if llm_api_key_file:
+        config["llm_api_key_file"] = llm_api_key_file
+    if insecure:
+        config["llm_allow_insecure_remote"] = True
+        config["llm_verify_tls"] = False
+        
+    llm_client = create_llm_client(config)
+    
+    from .health_check import check_llm_health
+    ok, msg = check_llm_health(config.get('llm_url'))
+    if not ok:
+        if "HTTPConnectionPool" in msg or "ConnectionRefusedError" in msg or "Max retries exceeded" in msg or "refused" in msg:
+            from rich.panel import Panel
+            guide_text = (
+                "[bold red]Could not connect to the local LLM server (LM Studio).[/bold red]\n\n"
+                "[bold white]Please start LM Studio manually following these steps:[/bold white]\n"
+                "  1. [cyan]Open LM Studio[/cyan] on your machine.\n"
+                "  2. [cyan]Click on the Developer Tab[/cyan] (the '< >' icon on the left sidebar).\n"
+                "  3. [cyan]Select a model[/cyan] to load from the dropdown list at the top.\n"
+                "  4. [cyan]Click the 'Start Server' button[/cyan] (default port is [yellow]1234[/yellow]).\n"
+                "  5. Ensure your client configuration matches (run [yellow]cudallm init[/yellow] to check config).\n"
+            )
+            console.print(Panel(guide_text, title="[bold yellow]LM Studio Connection Error[/bold yellow]", border_style="yellow"))
+        else:
+            console.print(f"[bold red]LLM health-check failed:[/bold red] {msg}")
+        sys.exit(1)
+        
+    console.print(f"[bold green]Starting LangChain Agent with instruction:[/bold green] '{instruction}'")
+    agent_graph = create_agent_with_llmclient(llm_client)
+    res = agent_graph.invoke({"messages": [("user", instruction)]})
+    response = res["messages"][-1].content
+    console.print("\n[bold green]Agent response:[/bold green]\n", response)
+
 
 @main.command()
 @click.argument('input_file', type=click.Path(exists=True))
@@ -1421,28 +1279,6 @@ def audit(input_file, markdown, recursive, llm_url, llm_api_key, llm_api_key_fil
     else:
         console.print("\n[bold green][INFO] Architectural Audit complete![/bold green]")
 
-def check_and_prepare_python_server(project_dir, config):
-    server_path = config.get("llm_server_path")
-    if server_path and (not os.path.exists(server_path) or not str(server_path).lower().endswith(".py")):
-        server_path = None
-    if not server_path:
-        server_path = find_llm_backend_path(project_dir)
-
-    if not server_path:
-        expected = os.path.join(project_dir, "tools", "server.py")
-        raise click.ClickException(
-            f"Python LLM backend not found. Expected `{expected}`. "
-            "Create or restore `tools/server.py` and retry."
-        )
-
-    config["llm_server_path"] = server_path
-    config.pop("llama_version", None)
-    save_config(config)
-    return server_path
-
-
-def check_and_update_llama_server(project_dir, config, no_update=False):
-    return check_and_prepare_python_server(project_dir, config)
 
 @main.command(name='setup-gpu')
 @click.option('--dry-run', is_flag=True, help='Show the commands without executing them')

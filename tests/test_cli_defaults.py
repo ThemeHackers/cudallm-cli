@@ -35,6 +35,7 @@ class CLIDefaultsTest(unittest.TestCase):
         expert_options = {param.name for param in main.commands["expert"].params}
         serve_options = {param.name for param in main.commands["serve"].params}
         audit_options = {param.name for param in main.commands["audit"].params}
+        agent_options = {param.name for param in main.commands["agent"].params}
 
         self.assertIn("dry_run", optimize_options)
         self.assertIn("ncu_metrics", optimize_options)
@@ -47,12 +48,14 @@ class CLIDefaultsTest(unittest.TestCase):
         self.assertIn("ssl_cert_file", serve_options)
         self.assertIn("allow_unsafe_network", serve_options)
         self.assertIn("no_update", serve_options)
+        self.assertIn("instruction", agent_options)
 
        
         for opt in ["llm_url", "llm_api_key", "llm_api_key_file", "insecure"]:
             self.assertIn(opt, optimize_options)
             self.assertIn(opt, expert_options)
             self.assertIn(opt, audit_options)
+            self.assertIn(opt, agent_options)
 
     def test_apply_llm_overrides(self):
         from src.cli import apply_llm_overrides
@@ -98,88 +101,6 @@ class CLIDefaultsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_public_url_override(config.copy(), "http://example.com:8080/completion")
 
-    def test_check_and_prepare_python_server_uses_existing_script(self):
-        from src.cli import check_and_prepare_python_server
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            server_bin = os.path.join(tmpdir, "tools", "server.py")
-            os.makedirs(os.path.dirname(server_bin), exist_ok=True)
-            with open(server_bin, "w", encoding="utf-8") as f:
-                f.write("dummy")
-
-            config = {
-                "llm_server_path": server_bin
-            }
-
-            path = check_and_prepare_python_server(tmpdir, config)
-            self.assertEqual(path, server_bin)
-            self.assertNotIn("llama_version", config)
-
-    def test_select_llama_asset_prefers_linux_cuda_131(self):
-        from src.cli import _select_llama_asset
-        from unittest.mock import patch
-
-        assets = [
-            {"name": "llama-b9264-bin-win-cuda-12.4-x64.zip"},
-            {"name": "llama-b9264-bin-win-cuda-13.1-x64.zip"},
-            {"name": "llama-b9264-bin-ubuntu-x64.tar.gz"},
-            {"name": "llama-b9264-bin-ubuntu-cuda-13.1-x64.tar.gz"},
-        ]
-
-        with patch("src.cli._get_release_assets", return_value=assets):
-            asset = _select_llama_asset("b9264", 13.0, is_windows=False)
-
-        self.assertIsNotNone(asset)
-        self.assertEqual(asset["name"], "llama-b9264-bin-ubuntu-cuda-13.1-x64.tar.gz")
-
-    def test_select_llama_asset_falls_back_to_generic_linux_cuda(self):
-        from src.cli import _select_llama_asset
-        from unittest.mock import patch
-
-        assets = [
-            {"name": "llama-b9264-bin-ubuntu-x64.tar.gz"},
-            {"name": "llama-b9264-bin-ubuntu-cuda-x64.tar.gz"},
-        ]
-
-        with patch("src.cli._get_release_assets", return_value=assets):
-            asset = _select_llama_asset("b9264", 13.0, is_windows=False)
-
-        self.assertIsNotNone(asset)
-        self.assertEqual(asset["name"], "llama-b9264-bin-ubuntu-cuda-x64.tar.gz")
-
-    def test_safe_zip_extraction_blocks_traversal(self):
-        from src.cli import _extract_zip_safely
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            archive_path = os.path.join(tmpdir, "test.zip")
-            dest_dir = os.path.join(tmpdir, "dest")
-            os.makedirs(dest_dir, exist_ok=True)
-
-            with zipfile.ZipFile(archive_path, "w") as archive:
-                archive.writestr("../evil.txt", "owned")
-                archive.writestr("good.txt", "ok")
-
-            with zipfile.ZipFile(archive_path, "r") as archive:
-                with self.assertRaises(RuntimeError):
-                    _extract_zip_safely(archive, dest_dir)
-
-    def test_safe_tar_extraction_blocks_traversal(self):
-        from src.cli import _extract_tar_safely
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            archive_path = os.path.join(tmpdir, "test.tar.gz")
-            dest_dir = os.path.join(tmpdir, "dest")
-            os.makedirs(dest_dir, exist_ok=True)
-
-            with tarfile.open(archive_path, "w:gz") as archive:
-                info = tarfile.TarInfo("../evil.txt")
-                payload = b"owned"
-                info.size = len(payload)
-                archive.addfile(info, io.BytesIO(payload))
-
-            with tarfile.open(archive_path, "r:gz") as archive:
-                with self.assertRaises(RuntimeError):
-                    _extract_tar_safely(archive, dest_dir)
 
     def test_probe_llm_server_uses_tls_verification_for_https(self):
         from unittest.mock import patch
