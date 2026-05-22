@@ -53,6 +53,41 @@ class LangChainAgentTest(unittest.TestCase):
         self.assertIn("profile_system", names)
         self.assertIn("profile_kernel", names)
         self.assertIn("summarize_profile", names)
+        self.assertIn("audit_cuda_code", names)
+
+    def test_audit_cuda_code_tool(self):
+      
+        import tempfile
+        import os
+        from src.langchain_agent import audit_cuda_code
+
+        with tempfile.NamedTemporaryFile(suffix=".cu", mode="w", delete=False) as f:
+            f.write("__global__ void my_kernel() { __shared__ float s[10]; }") # missing syncthreads
+            temp_path = f.name
+
+        try:
+            res_str = audit_cuda_code.invoke({"source_path": temp_path})
+            res = json.loads(res_str)
+            self.assertEqual(res["status"], "Issues Found")
+            self.assertIn("__syncthreads() is missing", res["report"])
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def test_recipe_database(self):
+        from src.recipes import RecipeDatabase
+        db = RecipeDatabase()
+        reduction_code = "__global__ void my_reduction_kernel() {}"
+        matched = db.match_recipe(reduction_code)
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched["name"], "Shared Memory Reduction & Sequential Addressing")
+
+    def test_roofline_analyzer(self):
+        from src.roofline import RooflineAnalyzer
+        code = "__global__ void matmul() { float a = b + c; d[i] = a; }"
+        res = RooflineAnalyzer.analyze_static(code)
+        self.assertIn("arithmetic_intensity", res)
+        self.assertIn("bottleneck", res)
 
     @patch("openai.resources.chat.completions.Completions.create")
     def test_local_lm_studio_chat_generate(self, mock_create):
@@ -68,7 +103,8 @@ class LangChainAgentTest(unittest.TestCase):
         mock_response.choices = [mock_choice]
         
         mock_create.return_value = mock_response
-
+        
+        from langchain_core.messages import HumanMessage
         chat = LocalLMStudioChat(base_url="http://localhost:1234/v1")
         messages = [HumanMessage(content="Hello")]
         result = chat._generate(messages)

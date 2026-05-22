@@ -521,7 +521,7 @@ class LLMClient:
                 except Exception:
                     pass
 
-    def create_optimization_prompt(self, code, env_info, target, best_time, flags):
+    def create_optimization_prompt(self, code, env_info, target, best_time, flags, ncu_csv=None, history=None):
         kernels = self._extract_kernels(code)
         if kernels:
             kernel_list_str = ", ".join(kernels)
@@ -534,9 +534,53 @@ class LLMClient:
             f"(Compute {env_info['compute_capability']}, CUDA {env_info['cuda_version']}).\n"
         )
         if best_time != float('inf'):
-            system_prompt += f"Current latency: {best_time}ms. Target: {target}.\n"
+            system_prompt += f"Current best latency: {best_time}ms. Target: {target}.\n"
         if flags:
             system_prompt += f"Compiler flags used: {' '.join(flags)}.\n"
+
+      
+        try:
+            from .recipes import RecipeDatabase
+            db = RecipeDatabase()
+            recipe = db.match_recipe(code)
+            if recipe:
+                system_prompt += (
+                    f"\nMATCHED OPTIMIZATION PATTERN: {recipe['name']}\n"
+                    f"Description: {recipe['description']}\n"
+                    f"{recipe['few_shot_prompt']}\n"
+                )
+        except Exception:
+            pass
+
+      
+        try:
+            from .roofline import RooflineAnalyzer
+            roofline = None
+            if ncu_csv:
+                roofline = RooflineAnalyzer.analyze_ncu_csv(ncu_csv)
+            if not roofline:
+                roofline = RooflineAnalyzer.analyze_static(code)
+
+            system_prompt += (
+                f"\nHARDWARE ROOFLINE METRICS:\n"
+                f"- Estimated Arithmetic Intensity: {roofline['arithmetic_intensity']:.4f} FLOPs/Byte\n"
+                f"- Primary Bottleneck: {roofline['bottleneck']}\n"
+                f"- Diagnostic Context: {roofline['reason']}\n"
+            )
+            if roofline['bottleneck'] == "Memory-Bound":
+                system_prompt += "-> RECOMMENDATION: Focus on reducing VRAM bandwidth bottleneck. Use shared memory tiling, register caching, coalesced global memory access, and avoid bank conflicts.\n"
+            else:
+                system_prompt += "-> RECOMMENDATION: Focus on increasing instruction throughput. Unroll loops, use fast math intrinsics, and avoid register spilling/pressure.\n"
+        except Exception:
+            pass
+
+     
+        if history:
+            system_prompt += "\nHILL-CLIMBING OPTIMIZATION HISTORY:\n"
+            for item in history:
+                lat_str = f"{item['latency']:.4f} ms" if item.get('latency') and item['latency'] != 99999.0 else "failed"
+                system_prompt += f"- Iteration {item['iteration']}: Latency: {lat_str}, Compile Success: {item['compile_success']}\n"
+            system_prompt += "\nStudy the previous modifications and iteratively push the performance further. Avoid code structures that caused compile failures.\n"
             
         system_prompt += (
             "CRITICAL INSTRUCTIONS:\n"

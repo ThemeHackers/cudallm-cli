@@ -1,0 +1,7 @@
+feat(rd): implement 5 advanced R&D concepts for autonomous CUDA optimization
+
+- Concept 1 (Hill-Climbing): Track iterative optimization history and pass feedback to LLM.
+- Concept 2 (Roofline Model): Analyze static code and dynamic NCU profiles to evaluate FLOPs/Byte and bottleneck type (Memory vs Compute bound).
+- Concept 3 (Multi-Agent): Integrate `audit_cuda_code` tool for CUDA static safety and performance audits.
+- Concept 4 (Few-Shot RAG): Match code with optimization recipes (reduction, matmul, vector_add) and inject few-shot prompts.
+- Concept 5 (Cross-Platform): Add AMD ROCm hipcc and rocprof compiler and profiler path discovery support.

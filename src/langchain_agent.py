@@ -63,8 +63,36 @@ def summarize_profile(nsys_out: str, ncu_csv: str) -> str:
     """Summarize nsys/ncu outputs. Args: nsys_out (string), ncu_csv (path to CSV file). Returns human-readable summary string."""
     return summarize_profile_outputs(nsys_out, ncu_csv)
 
+@tool
+def audit_cuda_code(source_path: str) -> str:
+    """Statically audit a CUDA source file for performance issues and safety vulnerabilities. Args: source_path. Returns an audit report string."""
+    import re
+    if not os.path.exists(source_path):
+        return json.dumps({"error": f"File {source_path} does not exist"})
+    try:
+        with open(source_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+    issues = []
+    if "cudaDeviceSynchronize" not in code and ("cudaMemcpy" not in code or "cudaMemcpyDeviceToHost" not in code):
+        issues.append("- WARNING: Missing device synchronization or memory copies to host. Kernel results might not be flushed or validated.")
+    if "__shared__" in code and "__syncthreads()" not in code:
+        issues.append("- WARNING: Shared memory is declared but __syncthreads() is missing. This can cause data hazards and race conditions.")
+    if re.search(r'if\s*\(\s*threadIdx\.x\s*[<>!=]=?', code):
+        issues.append("- INFO: Thread conditional branching found. Review for potential warp divergence.")
+    if "for " in code and "#pragma unroll" not in code:
+        issues.append("- INFO: For loop found without '#pragma unroll'. Consider loop unrolling if loop boundaries are known.")
+    if "__shared__" in code and "[threadIdx.x]" in code and "stride" not in code:
+        issues.append("- INFO: Direct threadIdx.x indexing into shared memory. Review to prevent bank conflicts.")
+
+    if not issues:
+        return json.dumps({"status": "Clean", "message": "No obvious static code optimization or safety issues found."})
+    return json.dumps({"status": "Issues Found", "report": "\n".join(issues)})
+
 def get_tools() -> List[Any]:
-    return [compile_cuda, profile_system, profile_kernel, summarize_profile]
+    return [compile_cuda, profile_system, profile_kernel, summarize_profile, audit_cuda_code]
 
 class LocalLMStudioChat(BaseChatModel):
     base_url: str

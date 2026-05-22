@@ -188,12 +188,34 @@ def find_nsys_path():
             return _normalize_ext(found)
     return None
 
+def find_hipcc_path():
+    sys_path = shutil.which('hipcc')
+    if sys_path:
+        return _normalize_ext(sys_path)
+    candidates = [
+        "/opt/rocm/bin/hipcc",
+        "/usr/bin/hipcc"
+    ]
+    return _pick_first_existing(candidates)
+
+def find_rocprof_path():
+    sys_path = shutil.which('rocprof')
+    if sys_path:
+        return _normalize_ext(sys_path)
+    candidates = [
+        "/opt/rocm/bin/rocprof",
+        "/usr/bin/rocprof"
+    ]
+    return _pick_first_existing(candidates)
+
 def discover_tool_paths(project_dir=None):
     return {
         'nvcc_path': find_nvcc_path(),
         'nvidia_smi_path': find_nvidia_smi_path(),
         'ncu_path': find_ncu_path(),
         'nsys_path': find_nsys_path(),
+        'hipcc_path': find_hipcc_path(),
+        'rocprof_path': find_rocprof_path(),
     }
 
 def find_cmake_path():
@@ -252,6 +274,8 @@ def check_environment():
     nvidia_smi_path = find_nvidia_smi_path()
     ncu_path = find_ncu_path()
     nsys_path = find_nsys_path()
+    hipcc_path = find_hipcc_path()
+    rocprof_path = find_rocprof_path()
     
     env_info = {
         'nvcc_found': nvcc_path is not None,
@@ -262,6 +286,10 @@ def check_environment():
         'ncu_path': ncu_path,
         'nsys_found': nsys_path is not None,
         'nsys_path': nsys_path,
+        'hipcc_found': hipcc_path is not None,
+        'hipcc_path': hipcc_path,
+        'rocprof_found': rocprof_path is not None,
+        'rocprof_path': rocprof_path,
         'gpu_model': 'Unknown',
         'compute_capability': 'Unknown',
         'vram_total': 'Unknown',

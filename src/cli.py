@@ -415,6 +415,13 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     table.add_row("Nsight Compute Path", str(env_status.get("ncu_path", "N/A")))
     table.add_row("Nsight Systems Path", str(env_status.get("nsys_path", "N/A")))
 
+    if env_status.get("hipcc_found") or env_status.get("rocprof_found"):
+        table.add_row("-" * 25, "-" * 40)
+        table.add_row("AMD ROCm hipcc", "Found" if env_status.get("hipcc_found") else "Not Found")
+        table.add_row("AMD rocprof", "Found" if env_status.get("rocprof_found") else "Not Found")
+        table.add_row("hipcc Path", str(env_status.get("hipcc_path", "N/A")))
+        table.add_row("rocprof Path", str(env_status.get("rocprof_path", "N/A")))
+
     console.print(table)
 
 
@@ -537,7 +544,16 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
             with Live(dashboard, refresh_per_second=4) as live:
 
                 dashboard.update_status("Prompting local LLM for optimization...")
-                prompt = llm.create_optimization_prompt(current_code, env_info, target, best_time, flags)
+                ncu_csv_path = prof_res.get("ncu_csv") if (i > 0 and 'prof_res' in locals()) else None
+                prompt = llm.create_optimization_prompt(
+                    current_code,
+                    env_info,
+                    target,
+                    best_time,
+                    flags,
+                    ncu_csv=ncu_csv_path,
+                    history=history
+                )
 
                 new_code, gen_time = llm.generate_code(
                     prompt,
