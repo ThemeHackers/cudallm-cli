@@ -1,5 +1,8 @@
 name: NCU Regression Check
 
+permissions:
+  contents: read
+
 on:
   push:
   pull_request:
