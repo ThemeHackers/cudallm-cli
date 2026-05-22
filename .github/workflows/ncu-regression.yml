@@ -41,7 +41,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install click requests rich psutil nvidia-ml-py
+          python -m pip install -r requirements.txt
+          python -m pip install -e .
 
       - name: Run compare_ncu unit tests
         run: |
@@ -64,6 +65,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt || true; fi
+          python -m pip install -e . || true
 
       - name: Ensure script is executable
         run: chmod +x ci/ncu_regression_check.sh
