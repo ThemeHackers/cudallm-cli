@@ -501,7 +501,7 @@ int main(int argc, char** argv) {{
         except FileNotFoundError:
             return {"success": False, "error_log": "nvcc not found"}
 
-    def profile_latency(self):
+    def profile_latency(self, target_metric=None):
         if not os.path.exists(self.exe_path):
             return {"latency": float('inf'), "raw_output": ""}
 
@@ -586,7 +586,7 @@ int main(int argc, char** argv) {{
                     latency = 99999.0
                     try:
                         from .profiler_tools import parse_ncu_csv_for_hotspot
-                        hotspot = parse_ncu_csv_for_hotspot(csv_file)
+                        hotspot = parse_ncu_csv_for_hotspot(csv_file, target_metric)
                         if hotspot and hotspot.get("value") is not None:
                             latency = float(hotspot["value"])
                     except Exception:

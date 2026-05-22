@@ -85,10 +85,13 @@ DEFAULT_RECIPES = {
 class RecipeDatabase:
     def __init__(self, recipe_file=None):
         if not recipe_file:
-          
-            app_dir = os.path.expanduser("~/.cudallm")
-            os.makedirs(app_dir, exist_ok=True)
-            self.recipe_file = os.path.join(app_dir, "optimization_recipes.json")
+            local_recipe = os.path.join(os.getcwd(), ".cudallm-recipes.json")
+            if os.path.exists(local_recipe):
+                self.recipe_file = local_recipe
+            else:
+                app_dir = os.path.expanduser("~/.cudallm")
+                os.makedirs(app_dir, exist_ok=True)
+                self.recipe_file = os.path.join(app_dir, "optimization_recipes.json")
         else:
             self.recipe_file = recipe_file
 

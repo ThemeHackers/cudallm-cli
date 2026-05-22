@@ -610,7 +610,7 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
 
                 if compile_res['success']:
                     dashboard.update_status("Profiling & verifying mathematical correctness...")
-                    prof_res = sandbox.profile_latency()
+                    prof_res = sandbox.profile_latency(target_metric=target)
                     if "VERIFICATION FAILURE" in prof_res.get("raw_output", ""):
                         verification_failed = True
                         compile_res['success'] = False
@@ -649,7 +649,7 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
                         compile_res = sandbox.compile()
                         if compile_res['success']:
                             dashboard.update_status("Re-profiling & verifying healed CUDA code...")
-                            prof_res = sandbox.profile_latency()
+                            prof_res = sandbox.profile_latency(target_metric=target)
                             if "VERIFICATION FAILURE" in prof_res.get("raw_output", ""):
                                 verification_failed = True
                                 compile_res['success'] = False

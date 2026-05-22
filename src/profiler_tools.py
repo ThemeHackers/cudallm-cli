@@ -47,7 +47,7 @@ def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
 
     return {"out": out, "csv": csv_path, "basename": base}
 
-def parse_ncu_csv_for_hotspot(csv_path):
+def parse_ncu_csv_for_hotspot(csv_path, target_metric=None):
     if not os.path.exists(csv_path):
         return None
     try:
@@ -78,11 +78,18 @@ def parse_ncu_csv_for_hotspot(csv_path):
                     break
           
             time_idx = None
-            for i, h in enumerate(headers):
-                hl = h.lower()
-                if 'time' in hl or 'cycles' in hl or 'duration' in hl or 'elapsed' in hl:
-                    time_idx = i
-                    break
+            if target_metric and target_metric.lower() != 'latency':
+                for i, h in enumerate(headers):
+                    if h.lower() == target_metric.lower() or target_metric.lower() in h.lower():
+                        time_idx = i
+                        break
+
+            if time_idx is None:
+                for i, h in enumerate(headers):
+                    hl = h.lower()
+                    if 'time' in hl or 'cycles' in hl or 'duration' in hl or 'elapsed' in hl:
+                        time_idx = i
+                        break
           
             if time_idx is None and data_rows:
                 for i in range(len(headers)):
@@ -101,7 +108,7 @@ def parse_ncu_csv_for_hotspot(csv_path):
                     continue
                 name = r[name_idx]
                 try:
-                    val = float(r[time_idx])
+                    val = float(r[time_idx].replace(',', ''))
                 except Exception:
                     continue
                 if val > best_val:
