@@ -415,13 +415,6 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     table.add_row("Nsight Compute Path", str(env_status.get("ncu_path", "N/A")))
     table.add_row("Nsight Systems Path", str(env_status.get("nsys_path", "N/A")))
 
-    if env_status.get("hipcc_found") or env_status.get("rocprof_found"):
-        table.add_row("-" * 25, "-" * 40)
-        table.add_row("AMD ROCm hipcc", "Found" if env_status.get("hipcc_found") else "Not Found")
-        table.add_row("AMD rocprof", "Found" if env_status.get("rocprof_found") else "Not Found")
-        table.add_row("hipcc Path", str(env_status.get("hipcc_path", "N/A")))
-        table.add_row("rocprof Path", str(env_status.get("rocprof_path", "N/A")))
-
     console.print(table)
 
 
