@@ -115,8 +115,8 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertIn("Repair the user's CUDA source so it compiles cleanly", prompt)
         self.assertIn("Prioritize the compiler diagnostics over the previous code", prompt)
         self.assertIn("This is repair attempt 1/1", prompt)
-    self.assertIn("Compiler diagnostics summary:", prompt)
-    self.assertIn("Raw compiler diagnostics:", prompt)
+        self.assertIn("Compiler diagnostics summary:", prompt)
+        self.assertIn("Raw compiler diagnostics:", prompt)
 
     @patch("src.llm_client.validate_llm_endpoint")
     @patch("src.llm_client.build_auth_headers")
