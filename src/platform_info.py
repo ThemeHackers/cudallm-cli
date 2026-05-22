@@ -13,26 +13,10 @@ from pathlib import Path
 
 
 def detect_platform() -> str:
-    """Return a short platform tag: ``"windows"``, ``"colab"``, or ``"linux"``."""
-    if is_colab():
-        return "colab"
+    """Return a short platform tag: ``"windows"`` or ``"linux"``."""
     if os.name == "nt":
         return "windows"
     return "linux"
-
-
-def is_colab() -> bool:
-    """Detect whether we are running inside a Google Colab notebook."""
-    if os.environ.get("COLAB_GPU") or os.environ.get("COLAB_RELEASE_TAG"):
-        return True
-    if os.path.isdir("/content") and os.path.isfile("/etc/os-release"):
-        try:
-            with open("/etc/os-release") as f:
-                if "colab" in f.read().lower():
-                    return True
-        except Exception:
-            pass
-    return False
 
 
 def is_wsl() -> bool:
@@ -53,7 +37,7 @@ def is_windows() -> bool:
 
 
 def is_linux() -> bool:
-    """Return ``True`` on any Linux variant (including Colab and WSL)."""
+    """Return ``True`` on any Linux variant (including WSL)."""
     return os.name != "nt"
 
 
@@ -101,7 +85,7 @@ def get_legacy_config_path() -> Path | None:
 
 
 def get_exe_extension() -> str:
-    """Return ``".exe"`` on Windows, ``""`` on Linux/Colab."""
+    """Return ``".exe"`` on Windows, ``""`` on Linux."""
     return ".exe" if is_windows() else ""
 
 
@@ -125,7 +109,6 @@ def platform_display_name() -> str:
     plat = detect_platform()
     labels = {
         "windows": "Windows (Native)",
-        "colab": "Google Colab (Linux)",
         "linux": "Linux",
     }
     label = labels.get(plat, plat)

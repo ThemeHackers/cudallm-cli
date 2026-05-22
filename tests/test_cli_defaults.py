@@ -1,4 +1,9 @@
 import unittest
+import io
+import tempfile
+import os
+import zipfile
+import tarfile
 
 from click.testing import CliRunner
 
@@ -95,8 +100,6 @@ class CLIDefaultsTest(unittest.TestCase):
 
     def test_check_and_prepare_python_server_uses_existing_script(self):
         from src.cli import check_and_prepare_python_server
-        import tempfile
-        import os
 
         with tempfile.TemporaryDirectory() as tmpdir:
             server_bin = os.path.join(tmpdir, "tools", "server.py")
@@ -143,6 +146,58 @@ class CLIDefaultsTest(unittest.TestCase):
 
         self.assertIsNotNone(asset)
         self.assertEqual(asset["name"], "llama-b9264-bin-ubuntu-cuda-x64.tar.gz")
+
+    def test_safe_zip_extraction_blocks_traversal(self):
+        from src.cli import _extract_zip_safely
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = os.path.join(tmpdir, "test.zip")
+            dest_dir = os.path.join(tmpdir, "dest")
+            os.makedirs(dest_dir, exist_ok=True)
+
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("../evil.txt", "owned")
+                archive.writestr("good.txt", "ok")
+
+            with zipfile.ZipFile(archive_path, "r") as archive:
+                with self.assertRaises(RuntimeError):
+                    _extract_zip_safely(archive, dest_dir)
+
+    def test_safe_tar_extraction_blocks_traversal(self):
+        from src.cli import _extract_tar_safely
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = os.path.join(tmpdir, "test.tar.gz")
+            dest_dir = os.path.join(tmpdir, "dest")
+            os.makedirs(dest_dir, exist_ok=True)
+
+            with tarfile.open(archive_path, "w:gz") as archive:
+                info = tarfile.TarInfo("../evil.txt")
+                payload = b"owned"
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+
+            with tarfile.open(archive_path, "r:gz") as archive:
+                with self.assertRaises(RuntimeError):
+                    _extract_tar_safely(archive, dest_dir)
+
+    def test_probe_llm_server_uses_tls_verification_for_https(self):
+        from unittest.mock import patch
+        from src.cli import _probe_llm_server
+
+        with patch("src.cli.requests.get") as mock_get:
+            _probe_llm_server("https://example.com/v1/models", {"Authorization": "Bearer x"}, verify_tls=True)
+
+        self.assertEqual(mock_get.call_args.kwargs["verify"], True)
+
+    def test_probe_llm_server_can_skip_verification_for_http(self):
+        from unittest.mock import patch
+        from src.cli import _probe_llm_server
+
+        with patch("src.cli.requests.get") as mock_get:
+            _probe_llm_server("http://127.0.0.1:1234/v1/models", {}, verify_tls=False)
+
+        self.assertEqual(mock_get.call_args.kwargs["verify"], False)
 
     def test_setup_gpu_command_flags(self):
         setup_options = {param.name for param in main.commands["setup-gpu"].params}

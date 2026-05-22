@@ -53,6 +53,56 @@ DEFAULT_CONFIG = {
 CUDA_EXTENSIONS = {".cu", ".cuh"}
 IGNORE_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "node_modules"}
 
+
+def _is_within_directory(base_dir, target_path):
+    base_dir = os.path.abspath(base_dir)
+    target_path = os.path.abspath(target_path)
+    try:
+        return os.path.commonpath([base_dir, target_path]) == base_dir
+    except ValueError:
+        return False
+
+
+def _extract_zip_safely(zip_ref, dest_dir):
+    for member in zip_ref.infolist():
+        member_path = os.path.join(dest_dir, member.filename)
+        if not _is_within_directory(dest_dir, member_path):
+            raise RuntimeError(f"Unsafe archive member path: {member.filename}")
+
+        if member.is_dir():
+            os.makedirs(member_path, exist_ok=True)
+            continue
+
+        os.makedirs(os.path.dirname(member_path), exist_ok=True)
+        with zip_ref.open(member, "r") as source, open(member_path, "wb") as target:
+            shutil.copyfileobj(source, target)
+
+
+def _extract_tar_safely(tar_ref, dest_dir):
+    for member in tar_ref.getmembers():
+        member_path = os.path.join(dest_dir, member.name)
+        if not _is_within_directory(dest_dir, member_path):
+            raise RuntimeError(f"Unsafe archive member path: {member.name}")
+
+        if member.isdir():
+            os.makedirs(member_path, exist_ok=True)
+            continue
+
+        if member.issym() or member.islnk() or member.ischr() or member.isblk() or member.isfifo():
+            raise RuntimeError(f"Unsupported archive member type: {member.name}")
+
+        source = tar_ref.extractfile(member)
+        if source is None:
+            raise RuntimeError(f"Unable to extract archive member: {member.name}")
+
+        os.makedirs(os.path.dirname(member_path), exist_ok=True)
+        with source, open(member_path, "wb") as target:
+            shutil.copyfileobj(source, target)
+
+
+def _probe_llm_server(test_url, headers, verify_tls):
+    return requests.get(test_url, headers=headers, timeout=3, verify=verify_tls)
+
 def collect_cuda_files(input_path, recursive=True, exclude_dirs=None):
     if os.path.isfile(input_path):
         return [input_path]
@@ -343,10 +393,10 @@ def _download_and_extract_asset(asset, dest_dir):
 
     if name.lower().endswith('.zip'):
         with zipfile.ZipFile(archive_filepath, 'r') as zip_ref:
-            zip_ref.extractall(dest_dir)
+            _extract_zip_safely(zip_ref, dest_dir)
     elif name.lower().endswith(('.tar.gz', '.tgz')):
         with tarfile.open(archive_filepath, 'r:gz') as tar_ref:
-            tar_ref.extractall(dest_dir)
+            _extract_tar_safely(tar_ref, dest_dir)
     else:
         raise RuntimeError(f"Unsupported archive format for {name}")
 
@@ -1476,7 +1526,7 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
                 key = f.read().strip()
                 headers["Authorization"] = f"Bearer {key}"
 
-        response = requests.get(test_url, headers=headers, timeout=3, verify=False)
+        response = _probe_llm_server(test_url, headers, verify_tls=(scheme == "https"))
         if response.status_code == 200:
             models_data = response.json()
             models_list = models_data.get("data", [])

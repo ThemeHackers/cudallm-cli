@@ -5,14 +5,6 @@ Behavior:
 - Prefer llama-cpp-python (if installed) to load GGUF/llama.cpp models (uses CUDA if llama.cpp is compiled with CUDA)
 - Otherwise fall back to Hugging Face `transformers` (works with CUDA via `device_map="auto"` and `bitsandbytes`/`accelerate`)
 
-Usage (Colab):
-- Install dependencies (choose one path):
-  # For llama-cpp-python (GGUF / llama.cpp)
-  pip install "llama-cpp-python"
-
-  # For transformers + bitsandbytes (HF checkpoints)
-  pip install transformers accelerate bitsandbytes safetensors[torch]
-
 Run:
     python tools/server.py --hf-repo prithivMLmods/cudaLLM-8B-GGUF --hf-file cudaLLM-8B.Q2_K.gguf --host 127.0.0.1 --port 8081 --use-cuda
 

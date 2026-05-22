@@ -120,49 +120,6 @@ nsys --version
 > **LM Studio Setup**:
 > Make sure to download and start **LM Studio**. Under the developer tab, load a GGUF model (e.g., `cudaLLM-8B` or similar) and start the local server on port `1234` before running the optimizer.
 
-### Google Colab Installation (Tesla T4 GPU)
-
-1. **Open Google Colab notebook** and enable GPU:
-   - Go to Runtime → Change runtime type → Hardware accelerator → GPU (T4)
-
-2. **Install CUDA Toolkit** (Colab has CUDA pre-installed, but verify):
-   ```bash
-   !nvcc --version
-   !nvidia-smi
-   ```
-
-3. **Clone repository and install**:
-   ```bash
-   !git clone https://github.com/ThemeHackers/cudallm-cli.git
-   %cd cudallm-cli
-   !pip install -r requirements.txt
-   !pip install -e .
-   ```
-
-4. **Install NVIDIA Nsight Tools** (for Colab):
-   ```bash
-   # Nsight Compute for profiling
-   !wget https://developer.download.nvidia.com/devtools/nsight-compute/2026_1/Nsight_Compute_Linux_2026.1.1.97_39587526.deb
-   !dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
-
-   # Nsight Systems for system profiling
-   !wget https://developer.download.nvidia.com/devtools/nsight-systems/2026_1/Nsight_Systems_Linux_2026.1.1.97_39587526.deb
-   !dpkg -i Nsight_Systems_Linux_2026.1.1.97_39587526.deb
-   ```
-
-5. **Initialize and verify**:
-   ```bash
-   !cudallm init
-   !cudallm doctor
-   ```
-
-6. **Configure LLM Connection**:
-   On Google Colab, you can connect to your local LM Studio instance (e.g. via an ngrok tunnel or other port forwarding) or a remote OpenAI-compatible endpoint:
-   ```bash
-   # Verify the connection to your remote/forwarded LM Studio server (default port 1234)
-   !cudallm serve
-   ```
-
 ### Linux/macOS Installation
 
 1. **Clone the repository**:
@@ -393,45 +350,6 @@ Failed to download model from HuggingFace
 - Use `--no-update` flag to skip auto-update
 - Manually download GGUF model and specify local path
 
-### Google Colab-Specific Issues (Tesla T4)
-
-**Nsight Tools Not Found**
-```
-ncu: command not found
-```
-**Solution**:
-```bash
-!wget https://developer.download.nvidia.com/devtools/nsight-compute/2026_1/Nsight_Compute_Linux_2026.1.1.97_39587526.deb
-!dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
-```
-
-**GPU Not Detected in Colab**
-```
-No CUDA-capable device is detected
-```
-**Solution**:
-- Go to Runtime → Change runtime type → Hardware accelerator → GPU
-- Select "T4" as GPU type
-- Restart runtime after changing settings
-
-**Model Too Large for T4 (16GB VRAM)**
-```
-CUDA_ERROR_OUT_OF_MEMORY on Tesla T4
-```
-**Solution**:
-- Use Q4_K_M quantization (recommended for T4)
-- Reduce `--ngl` to 20-25 layers
-- Use smaller model (7B instead of 13B)
-
-**Permission Denied on Installation**
-```
-Permission denied: '/usr/local/bin/ncu'
-```
-**Solution**:
-```bash
-!sudo dpkg -i Nsight_Compute_Linux_2026.1.1.97_39587526.deb
-```
-
 ### General Issues
 
 **Profiler Not Found Error**
@@ -484,13 +402,3 @@ cudallm doctor
 cudallm init
 ```
 
-**Google Colab**:
-```bash
-# Check GPU and CUDA
-!nvidia-smi
-!nvcc --version
-
-# Verify cudallm
-!cudallm doctor
-!cudallm init
-```

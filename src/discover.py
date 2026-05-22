@@ -222,7 +222,7 @@ def discover_tool_paths(project_dir=None):
     }
 
 def find_cmake_path():
-    """Locate cmake binary for source builds (especially on Colab)."""
+    """Locate cmake binary for source builds."""
     sys_path = shutil.which('cmake')
     if sys_path:
         return sys_path
@@ -237,8 +237,7 @@ def find_cmake_path():
 def detect_cuda_version_from_toolkit():
     """
     Parse CUDA version from the toolkit's version.txt or version.json
-    without requiring nvidia-smi (useful on Colab where nvidia-smi may
-    report a different driver-level CUDA version).
+    without requiring nvidia-smi.
     """
     search_roots = []
     cuda_path = os.environ.get("CUDA_PATH") or os.environ.get("CUDA_HOME")

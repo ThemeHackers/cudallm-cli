@@ -10,7 +10,6 @@ from pathlib import Path
 
 from src.platform_info import (
     detect_platform,
-    is_colab,
     is_wsl,
     is_windows,
     is_linux,
@@ -46,53 +45,6 @@ class TestIsLinux:
             assert is_linux() is False
 
 
-class TestIsColab:
-    def test_colab_gpu_env_var(self):
-        with patch.dict("os.environ", {"COLAB_GPU": "1"}, clear=False):
-            assert is_colab() is True
-
-    def test_colab_release_tag_env_var(self):
-        with patch.dict("os.environ", {"COLAB_RELEASE_TAG": "v1"}, clear=False):
-            assert is_colab() is True
-
-    def test_no_env_vars_no_content_dir(self):
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("src.platform_info.os.path.isdir", return_value=False):
-                assert is_colab() is False
-
-    def test_content_dir_with_colab_in_os_release(self):
-        """Fallback detection via /etc/os-release containing 'colab'."""
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("src.platform_info.os.path.isdir", return_value=True):
-                with patch("src.platform_info.os.path.isfile", return_value=True):
-                    m = mock_open(read_data="NAME=Google Colab\n")
-                    with patch("builtins.open", m):
-                        assert is_colab() is True
-
-    def test_content_dir_without_colab_in_os_release(self):
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("src.platform_info.os.path.isdir", return_value=True):
-                with patch("src.platform_info.os.path.isfile", return_value=True):
-                    m = mock_open(read_data="NAME=Ubuntu\n")
-                    with patch("builtins.open", m):
-                        assert is_colab() is False
-
-    def test_content_dir_os_release_read_error(self):
-        """If reading /etc/os-release raises, we fall back to False."""
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("src.platform_info.os.path.isdir", return_value=True):
-                with patch("src.platform_info.os.path.isfile", return_value=True):
-                    with patch("builtins.open", side_effect=PermissionError):
-                        assert is_colab() is False
-
-    def test_content_dir_exists_but_os_release_missing(self):
-        """/content exists but /etc/os-release does not."""
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("src.platform_info.os.path.isdir", return_value=True):
-                with patch("src.platform_info.os.path.isfile", return_value=False):
-                    assert is_colab() is False
-
-
 class TestIsWSL:
     def test_on_nt_always_false(self):
         with patch("src.platform_info.os.name", "nt"):
@@ -123,19 +75,13 @@ class TestIsWSL:
 
 
 class TestDetectPlatform:
-    def test_returns_colab_when_colab(self):
-        with patch("src.platform_info.is_colab", return_value=True):
-            assert detect_platform() == "colab"
-
     def test_returns_windows_on_nt(self):
-        with patch("src.platform_info.is_colab", return_value=False):
-            with patch("src.platform_info.os.name", "nt"):
-                assert detect_platform() == "windows"
+        with patch("src.platform_info.os.name", "nt"):
+            assert detect_platform() == "windows"
 
     def test_returns_linux_on_posix(self):
-        with patch("src.platform_info.is_colab", return_value=False):
-            with patch("src.platform_info.os.name", "posix"):
-                assert detect_platform() == "linux"
+        with patch("src.platform_info.os.name", "posix"):
+            assert detect_platform() == "linux"
 
 
 class TestDirectoryHelpers:
@@ -205,13 +151,8 @@ class TestCompiledBinaryName:
 
 
 class TestDefaultLLMPort:
-    def test_colab_port(self):
-        with patch("src.platform_info.is_colab", return_value=True):
-            assert get_default_llm_port() == 1234
-
-    def test_non_colab_port(self):
-        with patch("src.platform_info.is_colab", return_value=False):
-            assert get_default_llm_port() == 1234
+    def test_default_port(self):
+        assert get_default_llm_port() == 1234
 
 
 class TestPlatformDisplayName:
@@ -219,11 +160,6 @@ class TestPlatformDisplayName:
         with patch("src.platform_info.detect_platform", return_value="windows"):
             with patch("src.platform_info.is_wsl", return_value=False):
                 assert platform_display_name() == "Windows (Native)"
-
-    def test_colab_display(self):
-        with patch("src.platform_info.detect_platform", return_value="colab"):
-            with patch("src.platform_info.is_wsl", return_value=False):
-                assert platform_display_name() == "Google Colab (Linux)"
 
     def test_linux_display(self):
         with patch("src.platform_info.detect_platform", return_value="linux"):
