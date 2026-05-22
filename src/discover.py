@@ -17,6 +17,53 @@ def _normalize_ext(path):
     return base + ext.lower()
 
 
+def find_cl_exe_dir():
+    """Find the directory containing MSVC cl.exe on Windows for nvcc host compilation."""
+    if os.name != 'nt':
+        return None
+
+
+    cl_on_path = shutil.which('cl')
+    if cl_on_path:
+        return os.path.dirname(cl_on_path)
+
+
+    vswhere = r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    if os.path.exists(vswhere):
+        try:
+            res = subprocess.run(
+                [vswhere, '-latest', '-property', 'installationPath'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10
+            )
+            vs_path = res.stdout.strip()
+            if vs_path:
+                msvc_root = os.path.join(vs_path, 'VC', 'Tools', 'MSVC')
+                if os.path.isdir(msvc_root):
+                    versions = sorted(os.listdir(msvc_root), reverse=True)
+                    for ver in versions:
+                        candidate = os.path.join(msvc_root, ver, 'bin', 'Hostx64', 'x64', 'cl.exe')
+                        if os.path.exists(candidate):
+                            return os.path.dirname(candidate)
+        except Exception:
+            pass
+
+   
+    vs_roots = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Microsoft Visual Studio"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Microsoft Visual Studio"),
+    ]
+    for vs_root in vs_roots:
+        if not os.path.isdir(vs_root):
+            continue
+        pattern = os.path.join(vs_root, '*', '*', 'VC', 'Tools', 'MSVC', '*', 'bin', 'Hostx64', 'x64', 'cl.exe')
+        matches = glob.glob(pattern)
+        if matches:
+            matches.sort(reverse=True)
+            return os.path.dirname(matches[0])
+
+    return None
+
+
 def _version_sort_key(path):
     parts = re.findall(r"\d+", path)
     if not parts:
@@ -143,6 +190,26 @@ def find_ncu_path():
             return _normalize_ext(found)
     return None
 
+def find_ncu_sections_path(ncu_path=None):
+    if not ncu_path:
+        ncu_path = find_ncu_path()
+    if not ncu_path:
+        return None
+    parent = os.path.dirname(ncu_path)
+
+    candidate = os.path.join(parent, "sections")
+    if os.path.exists(candidate) and os.path.isdir(candidate):
+        return os.path.abspath(candidate)
+ 
+    candidate = os.path.join(os.path.dirname(parent), "sections")
+    if os.path.exists(candidate) and os.path.isdir(candidate):
+        return os.path.abspath(candidate)
+
+    candidate = os.path.join(os.path.dirname(os.path.dirname(parent)), "sections")
+    if os.path.exists(candidate) and os.path.isdir(candidate):
+        return os.path.abspath(candidate)
+    return None
+
 def find_nsys_path():
     sys_path = shutil.which('nsys')
     if sys_path:
@@ -189,11 +256,13 @@ def find_nsys_path():
     return None
 
 def discover_tool_paths(project_dir=None):
+    ncu_p = find_ncu_path()
     return {
         'nvcc_path': find_nvcc_path(),
         'nvidia_smi_path': find_nvidia_smi_path(),
-        'ncu_path': find_ncu_path(),
+        'ncu_path': ncu_p,
         'nsys_path': find_nsys_path(),
+        'ncu_sections_path': find_ncu_sections_path(ncu_p),
     }
 
 def find_cmake_path():

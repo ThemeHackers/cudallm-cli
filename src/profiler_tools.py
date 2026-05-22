@@ -21,22 +21,35 @@ def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
     return {"out": out, "basename": output_base}
 
 def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
-    from .discover import find_ncu_path
+    from .discover import find_ncu_path, find_ncu_sections_path
     ncu = find_ncu_path()
     if not ncu:
         return {"error": "ncu not found"}
+    sections_path = find_ncu_sections_path(ncu)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = output_base or f'ncu_expert_{ts}'
-    cmd = [ncu, '--csv', '-o', base, exe]
+    
+    cmd = [ncu]
+    if sections_path:
+        cmd.extend(['--section-folder', sections_path])
+    cmd.extend(['--csv', '-o', base, exe])
+    
     if metrics:
-        cmd = [ncu, '--metrics', metrics, '--csv', '-o', base, exe]
+        cmd = [ncu]
+        if sections_path:
+            cmd.extend(['--section-folder', sections_path])
+        cmd.extend(['--metrics', metrics, '--csv', '-o', base, exe])
+        
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     out = res.stdout + res.stderr
     csv_path = f"{base}.csv"
     rep_path = f"{base}.ncu-rep"
 
     if os.path.exists(rep_path):
-        export_cmd = [ncu, '--import', rep_path, '--csv']
+        export_cmd = [ncu]
+        if sections_path:
+            export_cmd.extend(['--section-folder', sections_path])
+        export_cmd.extend(['--import', rep_path, '--csv'])
         try:
             exp_res = subprocess.run(export_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
             if exp_res.returncode == 0 and exp_res.stdout.strip():

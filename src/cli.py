@@ -47,7 +47,7 @@ DEFAULT_CONFIG = {
     "llm_api_key_file": None,
     "llm_verify_tls": True,
     "llm_allow_insecure_remote": False,
-    "max_stream_chunks": 2000,
+    "max_stream_chunks": 8000,
 }
 
 CUDA_EXTENSIONS = {".cu", ".cuh"}
@@ -440,6 +440,15 @@ cudallm setup-gpu
 cudallm serve [options]
     Check LM Studio connection status or display startup instructions.
 
+cudallm agent [options]
+    Run LangChain-based autonomous performance engineering agent.
+
+cudallm dashboard [options]
+    Start the CUDA LLM Optimizer Web Dashboard.
+
+cudallm sandbox-run [options]
+    Run a command inside a Docker sandbox container.
+
 cudallm optimize <file|folder> [options]
     Run the optimization loop: prompt the LLM, compile, profile, verify, and heal.
 
@@ -481,6 +490,17 @@ serve:
     --ssl-cert-file  PEM certificate for HTTPS.
     --no-update      Deprecated (retained for backward compatibility).
 
+agent:
+    --instruction    Instruction for the LangChain agent.
+    --llm-url        Override the LLM backend URL.
+
+dashboard:
+    --port           Port to run the dashboard server on (default 8000).
+
+sandbox-run:
+    --image          Docker image to use.
+    --cmd            Command to run inside the container.
+
 Examples
 --------
 cudallm init
@@ -489,6 +509,9 @@ cudallm optimize path/to/kernel.cu --iters 3 --profile-mode auto --nvtx
 cudallm optimize path/to/kernel.cu --dry-run
 cudallm expert ./temp_cuda_kernel.exe --auto-nvtx --rerun
 cudallm serve --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf --ngl 24
+cudallm agent --instruction "Profile examples/vector_add.cu with ncu"
+cudallm dashboard --port 8000
+cudallm sandbox-run --image nvidia/cuda:12.2.0-devel-ubuntu22.04 --cmd "nvcc --version"
 """
         console.print(help_text)
 
@@ -845,7 +868,7 @@ def optimize(input_file, output, iters, target, retries, fast_math, opt_level, r
 
     if os.path.isdir(input_file):
         base_name = os.path.basename(os.path.normpath(input_file))
-        output_dir = output or os.path.join(os.path.dirname(input_file), f"optimized_{base_name}")
+        output_dir = output or os.path.join(os.getcwd(), "optimized", f"optimized_{base_name}")
 
         exclude_dirs = set()
         abs_input = os.path.abspath(input_file)
@@ -923,7 +946,12 @@ def optimize(input_file, output, iters, target, retries, fast_math, opt_level, r
         return
 
     if not output:
-        output = f"optimized_{os.path.basename(input_file)}"
+        optimized_dir = os.path.join(os.getcwd(), "optimized")
+        os.makedirs(optimized_dir, exist_ok=True)
+        base_name = os.path.basename(input_file)
+        if not base_name.startswith("optimized_"):
+            base_name = f"optimized_{base_name}"
+        output = os.path.join(optimized_dir, base_name)
 
     if dry_run:
         print_dry_run_panel(
@@ -990,10 +1018,87 @@ def sandbox_run(image, cmd_text, mount, workdir, mount_cwd, timeout, mem_limit_m
         volumes[host] = container
 
     result = run_in_docker(image=image, cmd=cmd_text, volumes=volumes or None, timeout=timeout, mem_limit_mb=mem_limit_mb)
-    console.print(Panel(result.get('stdout', '') or '', title='Docker sandbox stdout'))
+    
+    table = Table(title="[bold cyan]Docker Sandbox Run Summary[/bold cyan]", show_header=True, header_style="bold magenta")
+    table.add_column("Property", style="dim", width=25)
+    table.add_column("Details")
+    
+    table.add_row("Docker Image", image)
+    table.add_row("Command", cmd_text)
+    
+    rc = result.get('rc')
+    rc_style = "green" if rc == 0 else "bold red"
+    rc_text = f"[{rc_style}]{rc}[/{rc_style}]"
+    table.add_row("Return Code (rc)", rc_text)
+    
+    t_out = result.get('timed_out')
+    t_style = "bold red" if t_out else "green"
+    table.add_row("Timed Out", f"[{t_style}]{t_out}[/{t_style}]")
+    
+    k_lim = result.get('killed_by_limit')
+    k_style = "bold red" if k_lim else "green"
+    table.add_row("Killed By Limit", f"[{k_style}]{k_lim}[/{k_style}]")
+    
+    if mem_limit_mb:
+        table.add_row("Memory Limit", f"{mem_limit_mb} MB")
+        
+    console.print(table)
+    console.print()
+
+    stdout_val = result.get('stdout', '')
+    banner = None
+    cmd_out = stdout_val
+    
+    normalized = stdout_val.replace('\r\n', '\n')
+    if "== CUDA ==" in normalized or "==========\n== CUDA ==" in normalized:
+        license_marker = "/NGC-DL-CONTAINER-LICENSE"
+        idx = normalized.find(license_marker)
+        if idx != -1:
+            end_line_idx = normalized.find('\n', idx)
+            if end_line_idx != -1:
+                next_line_end = normalized.find('\n', end_line_idx + 1)
+                if next_line_end != -1:
+                    next_line = normalized[end_line_idx + 1:next_line_end].lower()
+                    if "convenience" in next_line:
+                        split_idx = next_line_end + 1
+                    else:
+                        split_idx = end_line_idx + 1
+                else:
+                    split_idx = end_line_idx + 1
+                
+                banner = normalized[:split_idx].strip()
+                cmd_out = normalized[split_idx:].strip()
+
+    if banner:
+        banner_lines = []
+        cuda_ver_match = re.search(r"CUDA Version\s+([\d\.]+)", banner, re.IGNORECASE)
+        cuda_version = cuda_ver_match.group(1) if cuda_ver_match else "Unknown"
+        
+        copyright_match = re.search(r"Copyright\s+\(c\)\s+[\d\-]+,\s*NVIDIA CORPORATION[^\n]*", banner, re.IGNORECASE)
+        if not copyright_match:
+            copyright_match = re.search(r"Copyright\s+\(c\)\s+[^\n]*NVIDIA[^\n]*", banner, re.IGNORECASE)
+        copyright_str = copyright_match.group(0).strip() if copyright_match else "Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved."
+        
+        banner_lines.append("[bold cyan]⚡ NVIDIA CUDA Container Info[/bold cyan]")
+        banner_lines.append(f"  [bold]CUDA Version:[/bold] [green]{cuda_version}[/green]")
+        banner_lines.append(f"  [bold]Copyright:[/bold]    [dim]{copyright_str}[/dim]")
+        banner_lines.append("")
+        banner_lines.append("[bold yellow]📜 NVIDIA Container License[/bold yellow]")
+        banner_lines.append("  Governed by: NVIDIA Deep Learning Container License")
+        banner_lines.append("  Terms:       [link=https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license][underline cyan]https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license[/underline cyan][/link]")
+        
+        formatted_banner = "\n".join(banner_lines)
+        console.print(Panel(formatted_banner, title='[bold cyan]CUDA Container Environment[/bold cyan]', border_style='cyan'))
+        if cmd_out:
+            console.print(Panel(cmd_out, title='[bold green]Command Output[/bold green]', border_style='green'))
+        else:
+            console.print(Panel("[italic dim]No output from command[/italic dim]", title='[bold green]Command Output[/bold green]', border_style='green'))
+    else:
+        if cmd_out and cmd_out.strip():
+            console.print(Panel(cmd_out, title='[bold green]Command Output[/bold green]', border_style='green'))
+
     if result.get('stderr'):
-        console.print(Panel(result.get('stderr', ''), title='Docker sandbox stderr', border_style='yellow'))
-    console.print(f"[bold]rc:[/bold] {result.get('rc')} | [bold]timed_out:[/bold] {result.get('timed_out')} | [bold]killed_by_limit:[/bold] {result.get('killed_by_limit')}")
+        console.print(Panel(result.get('stderr', ''), title='[bold red]Stderr[/bold red]', border_style='red'))
 
 
 @main.command()
@@ -1008,7 +1113,13 @@ def ncu(exe, metrics, output):
         return
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = output or f'ncu_report_{ts}'
+    
+    from .discover import find_ncu_sections_path
+    sections_path = find_ncu_sections_path(ncu_bin)
+    
     cmd = [ncu_bin]
+    if sections_path:
+        cmd.extend(['--section-folder', sections_path])
     if metrics:
         cmd += ['--metrics', metrics]
     cmd += ['--csv', '-o', base, exe]

@@ -1,0 +1,38 @@
+<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="cuda-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#76b900" /> <!-- NVIDIA green -->
+            <stop offset="50%" stop-color="#3b82f6" /> <!-- AI blue -->
+            <stop offset="100%" stop-color="#8b5cf6" /> <!-- purple -->
+        </linearGradient>
+        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="1.5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+    </defs>
+
+    <!-- Outer Chip Pins (CUDA GPU Representation) -->
+    <!-- Top Pins -->
+    <path d="M10 5V2M16 5V2M22 5V2" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+    <!-- Bottom Pins -->
+    <path d="M10 27V30M16 27V30M22 27V30" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+    <!-- Left Pins -->
+    <path d="M5 10H2M5 16H2M5 22H2" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+    <!-- Right Pins -->
+    <path d="M27 10H30M27 16H30M27 22H30" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+
+    <!-- Chip Core (Main Frame) -->
+    <rect x="5" y="5" width="22" height="22" rx="4" stroke="url(#cuda-gradient)" stroke-width="2" fill="rgba(19, 27, 46, 0.85)" />
+
+    <!-- Inner Circuit/Neural Pattern (LLM Representation) -->
+    <circle cx="10" cy="10" r="1.5" fill="#76b900" />
+    <circle cx="22" cy="10" r="1.5" fill="#3b82f6" />
+    <circle cx="10" cy="22" r="1.5" fill="#8b5cf6" />
+    <circle cx="22" cy="22" r="1.5" fill="#a855f7" />
+    
+    <!-- Thin circuit connections -->
+    <path d="M11.5 10H14.5M17.5 10H20.5M10 11.5V14.5M10 17.5V20.5M22 11.5V14.5M22 17.5V20.5M11.5 22H14.5M17.5 22H20.5" stroke="rgba(255,255,255,0.15)" stroke-width="1" />
+
+    <!-- Lightning Bolt (Optimizer / Performance Speedup) -->
+    <path d="M17.5 8.5L11.5 16.5H16.5L14.5 23.5L20.5 15.5H15.5L17.5 8.5Z" fill="url(#cuda-gradient)" filter="url(#glow)" />
+</svg>

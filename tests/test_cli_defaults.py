@@ -22,6 +22,11 @@ class CLIDefaultsTest(unittest.TestCase):
         self.assertEqual(file_option.default, "cudaLLM-8B.Q4_K_M.gguf")
         self.assertFalse(str(file_option.default).startswith(" "))
 
+    def test_max_stream_chunks_default_is_raised(self):
+        from src.cli import DEFAULT_CONFIG
+
+        self.assertEqual(DEFAULT_CONFIG["max_stream_chunks"], 8000)
+
     def test_help_uses_click_help_and_lists_new_commands(self):
         result = CliRunner().invoke(main, ["help"])
 

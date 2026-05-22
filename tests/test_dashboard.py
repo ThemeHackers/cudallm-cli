@@ -34,6 +34,22 @@ class DashboardServerTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("CUDA LLM Optimizer Dashboard", resp.text)
 
+    def test_serve_favicon(self):
+        url = f"http://localhost:{self.port}/favicon.ico"
+        resp = requests.get(url, timeout=5)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("Content-Type"), "image/x-icon")
+
+        url_png = f"http://localhost:{self.port}/favicon.png"
+        resp_png = requests.get(url_png, timeout=5)
+        self.assertEqual(resp_png.status_code, 200)
+        self.assertEqual(resp_png.headers.get("Content-Type"), "image/png")
+
+        url_svg = f"http://localhost:{self.port}/favicon.svg"
+        resp_svg = requests.get(url_svg, timeout=5)
+        self.assertEqual(resp_svg.status_code, 200)
+        self.assertEqual(resp_svg.headers.get("Content-Type"), "image/svg+xml")
+
     def test_api_status(self):
         url = f"http://localhost:{self.port}/api/status"
         resp = requests.get(url, timeout=5)
@@ -61,6 +77,54 @@ class DashboardServerTest(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data["status"], "idle")
         self.assertEqual(data["stage"], "Idle")
+        self.assertIsNone(data["best_time"])
+
+    def test_api_optimize_status_includes_profiling_fields(self):
+        url = f"http://localhost:{self.port}/api/optimize/status"
+        resp = requests.get(url, timeout=5)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("original_latency_profiling_failed", data)
+        self.assertIn("original_latency_raw_output", data)
+
+    def test_api_benchmark_history(self):
+        url = f"http://localhost:{self.port}/api/benchmark/history"
+        resp = requests.get(url, timeout=5)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("items", data)
+        self.assertIsInstance(data["items"], list)
+
+    def test_api_optimizer_presets(self):
+        url = f"http://localhost:{self.port}/api/optimizer/presets"
+        resp = requests.get(url, timeout=5)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("presets", data)
+        self.assertTrue(any(item["name"] == "balanced" for item in data["presets"]))
+
+    def test_api_benchmark_replay_requires_fields(self):
+        url = f"http://localhost:{self.port}/api/benchmark/replay"
+        resp = requests.post(url, json={}, timeout=5)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_profiling_failure_sentinel_remains_serializable(self):
+        active_run["original_latency"] = 99999.0
+        active_run["original_latency_profiling_failed"] = True
+        active_run["original_latency_raw_output"] = "NCU profiling failed to generate CSV report. Output logs:\nexample"
+
+        try:
+            url = f"http://localhost:{self.port}/api/optimize/status"
+            resp = requests.get(url, timeout=5)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data["original_latency"], 99999.0)
+            self.assertTrue(data["original_latency_profiling_failed"])
+            self.assertIn("NCU profiling failed", data["original_latency_raw_output"])
+        finally:
+            active_run["original_latency"] = None
+            active_run["original_latency_profiling_failed"] = False
+            active_run["original_latency_raw_output"] = ""
 
     def test_api_roofline_fails_on_non_existent(self):
         url = f"http://localhost:{self.port}/api/roofline?path=does_not_exist.cu"

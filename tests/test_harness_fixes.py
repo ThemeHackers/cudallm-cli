@@ -273,6 +273,75 @@ class TestHarnessFixes(unittest.TestCase):
         res_ollama = client_ollama.analyze_profile("dummy summary")
         self.assertEqual(res_ollama, "Ollama analysis results")
 
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    @patch("src.llm_client.requests.get")
+    def test_llm_client_auto_detects_model(self, mock_get, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {"id": "text-embedding-nomic"},
+                {"id": "cudallm-8b"}
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        self.assertEqual(client.model_name, "cudallm-8b")
+        mock_get.assert_called_once()
+        self.assertIn("/v1/models", mock_get.call_args.args[0])
+
+    @patch("src.llm_client.validate_llm_endpoint")
+    @patch("src.llm_client.build_auth_headers")
+    @patch("src.llm_client.requests.get")
+    @patch("src.llm_client.requests.post")
+    def test_generate_code_passes_model_parameter(self, mock_post, mock_get, mock_headers, mock_validate):
+        mock_validate.return_value = {"is_private": True, "is_secure": False}
+        mock_headers.return_value = {}
+
+        mock_models_response = MagicMock()
+        mock_models_response.status_code = 200
+        mock_models_response.json.return_value = {"data": [{"id": "cudallm-8b"}]}
+        mock_get.return_value = mock_models_response
+
+        mock_comp_response = MagicMock()
+        mock_comp_response.raise_for_status.return_value = None
+        mock_comp_response.iter_lines.return_value = [b"data: [DONE]"]
+        mock_post.return_value = mock_comp_response
+
+        client = LLMClient(url="http://127.0.0.1:8080")
+        client.generate_code("dummy prompt")
+
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "cudallm-8b")
+
+    @patch("src.health_check.requests.get")
+    @patch("src.health_check.requests.post")
+    def test_check_llm_health_queries_models_and_passes_model(self, mock_post, mock_get):
+        mock_models_response = MagicMock()
+        mock_models_response.status_code = 200
+        mock_models_response.json.return_value = {"data": [{"id": "cudallm-8b"}]}
+        mock_get.return_value = mock_models_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        from src.health_check import check_llm_health
+        ok, msg = check_llm_health("http://127.0.0.1:8080/v1/completions")
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, "ok (200)")
+
+        mock_get.assert_called_once_with("http://127.0.0.1:8080/v1/models", timeout=5)
+
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "cudallm-8b")
+
     def test_ncu_csv_metadata_row_skipping(self):
         dummy_csv_content = [
             ["## Nsight Compute CSV Export"],

@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CUDA LLM Optimizer Dashboard</title>
+    <!-- Favicon -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="alternate icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="shortcut icon" href="/favicon.png" type="image/png">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,22 +18,26 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
-            --bg-base: #0b0f19;
-            --bg-surface: #131b2e;
-            --bg-card: #1b2541;
-            --border-color: #26355a;
-            --border-glow: rgba(59, 130, 246, 0.2);
-            --primary: #3b82f6;
-            --primary-glow: rgba(59, 130, 246, 0.4);
-            --secondary: #a855f7;
-            --emerald: #10b981;
-            --rose: #f43f5e;
-            --amber: #f59e0b;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
+            --bg-base: #060913;
+            --bg-surface: rgba(13, 20, 38, 0.6);
+            --bg-card: rgba(22, 33, 62, 0.45);
+            --border-color: rgba(59, 130, 246, 0.15);
+            --border-glow: rgba(0, 240, 255, 0.25);
+            --primary: #00f0ff;
+            --primary-glow: rgba(0, 240, 255, 0.4);
+            --secondary: #9d4edd;
+            --secondary-glow: rgba(157, 78, 221, 0.45);
+            --nvidia-green: #76b900;
+            --nvidia-glow: rgba(118, 185, 0, 0.4);
+            --emerald: #0df2c9;
+            --rose: #ff007f;
+            --amber: #ffaa00;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
             --font-display: 'Outfit', sans-serif;
             --font-sans: 'Inter', sans-serif;
             --font-mono: 'Fira Code', monospace;
+            --glass-blur: 16px;
         }
 
         * {
@@ -40,6 +48,10 @@
 
         body {
             background-color: var(--bg-base);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(118, 185, 0, 0.05) 0px, transparent 50%),
+                radial-gradient(at 50% 0%, rgba(0, 240, 255, 0.05) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(157, 78, 221, 0.05) 0px, transparent 50%);
             color: var(--text-main);
             font-family: var(--font-sans);
             overflow: hidden;
@@ -50,14 +62,14 @@
 
         /* Scrollbars */
         ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
         }
         ::-webkit-scrollbar-track {
-            background: var(--bg-base);
+            background: transparent;
         }
         ::-webkit-scrollbar-thumb {
-            background: var(--border-color);
+            background: rgba(255, 255, 255, 0.1);
             border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
@@ -66,14 +78,15 @@
 
         /* Header */
         header {
-            background-color: var(--bg-surface);
+            background: rgba(13, 20, 38, 0.75);
+            backdrop-filter: blur(var(--glass-blur));
             border-bottom: 1px solid var(--border-color);
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.5rem;
             display: flex;
             align-items: center;
             justify-content: space-between;
             z-index: 10;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
         }
 
         .logo-section {
@@ -83,24 +96,39 @@
         }
 
         .logo-icon {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            background: rgba(6, 9, 19, 0.8);
+            border: 1px solid rgba(118, 185, 0, 0.4);
             width: 2.25rem;
             height: 2.25rem;
             border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-size: 1.25rem;
-            box-shadow: 0 0 15px var(--primary-glow);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+        }
+
+        .logo-icon:hover {
+            border-color: var(--primary);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            transform: scale(1.08) rotate(3deg);
+        }
+
+        .logo-icon svg {
+            transition: transform 0.5s ease;
+        }
+
+        .logo-icon:hover svg {
+            transform: scale(1.1);
         }
 
         h1 {
             font-family: var(--font-display);
             font-size: 1.25rem;
-            font-weight: 700;
-            letter-spacing: -0.025em;
-            background: linear-gradient(to right, #ffffff, #a5b4fc);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #ffffff 30%, #00f0ff 70%, #9d4edd 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -108,34 +136,36 @@
         .system-status {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1.25rem;
         }
 
         .status-pill {
-            background: var(--bg-card);
+            background: rgba(22, 33, 62, 0.6);
+            backdrop-filter: blur(8px);
             border: 1px solid var(--border-color);
             padding: 0.35rem 0.75rem;
             border-radius: 20px;
-            font-size: 0.8rem;
+            font-size: 0.72rem;
+            font-weight: 500;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.45rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
         }
 
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background-color: var(--emerald);
-            box-shadow: 0 0 8px var(--emerald);
         }
 
         .status-dot.offline {
             background-color: var(--rose);
-            box-shadow: 0 0 8px var(--rose);
         }
 
-        /* Dashboard Metrics Grid */
+        /* Hardware Metrics Grid */
         .hardware-grid {
             display: flex;
             align-items: center;
@@ -143,21 +173,34 @@
         }
 
         .hw-metric {
-            font-size: 0.8rem;
+            font-size: 0.72rem;
             color: var(--text-muted);
             display: flex;
             align-items: center;
-            gap: 0.4rem;
+            gap: 0.45rem;
+            background: rgba(255, 255, 255, 0.02);
+            padding: 0.3rem 0.55rem;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .hw-metric span {
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
         }
 
         .hw-metric strong {
             color: var(--text-main);
+            font-family: var(--font-mono);
+            min-width: 32px;
+            text-align: right;
         }
 
         .hw-progress-bar {
-            width: 60px;
-            height: 6px;
-            background-color: rgba(255, 255, 255, 0.1);
+            width: 55px;
+            height: 5px;
+            background-color: rgba(255, 255, 255, 0.08);
             border-radius: 3px;
             overflow: hidden;
             display: inline-block;
@@ -167,10 +210,30 @@
             height: 100%;
             background: linear-gradient(90deg, var(--primary), var(--secondary));
             width: 0%;
-            transition: width 0.5s ease;
+            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        /* Layout structure */
+        #gpu-name-container {
+            border-left: 1px solid var(--border-color);
+            padding-left: 0.75rem;
+            font-weight: 500;
+            color: var(--text-main);
+            background: none;
+            border-top: none;
+            border-bottom: none;
+            border-right: none;
+        }
+
+        #gpu-name {
+            font-family: var(--font-display);
+            font-size: 0.75rem;
+            background: linear-gradient(135deg, var(--nvidia-green), var(--primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 600;
+        }
+
+        /* Layout Structure */
         .main-container {
             display: flex;
             flex: 1;
@@ -180,16 +243,19 @@
 
         /* Sidebar */
         aside {
-            width: 260px;
-            background-color: var(--bg-surface);
+            width: 280px;
+            background: rgba(11, 15, 25, 0.7);
+            backdrop-filter: blur(var(--glass-blur));
             border-right: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
             flex-shrink: 0;
+            box-shadow: 4px 0 20px rgba(0, 0, 0, 0.2);
+            z-index: 5;
         }
 
         .sidebar-header {
-            padding: 1rem;
+            padding: 1.25rem 1rem;
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
@@ -198,26 +264,11 @@
 
         .sidebar-title {
             font-family: var(--font-display);
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            font-weight: 600;
-        }
-
-        .btn-icon {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: all 0.2s;
-        }
-
-        .btn-icon:hover {
-            color: var(--text-main);
-            background-color: rgba(255, 255, 255, 0.05);
+            letter-spacing: 0.08em;
+            color: var(--primary);
+            font-weight: 700;
         }
 
         .file-list {
@@ -226,46 +277,88 @@
             padding: 0.75rem;
             display: flex;
             flex-direction: column;
-            gap: 0.25rem;
+            gap: 0.35rem;
         }
 
         .file-item {
             display: flex;
             align-items: center;
-            gap: 0.6rem;
-            padding: 0.6rem 0.8rem;
-            border-radius: 6px;
+            justify-content: space-between;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: var(--text-muted);
-            transition: all 0.2s;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             border: 1px solid transparent;
+            background: rgba(255, 255, 255, 0.01);
         }
 
         .file-item:hover {
             color: var(--text-main);
-            background-color: rgba(255, 255, 255, 0.05);
+            background-color: rgba(0, 240, 255, 0.04);
+            border-color: rgba(0, 240, 255, 0.1);
+            transform: translateX(2px);
         }
 
         .file-item.active {
             color: white;
-            background-color: rgba(59, 130, 246, 0.15);
-            border-color: rgba(59, 130, 246, 0.3);
-            box-shadow: inset 0 0 10px rgba(59, 130, 246, 0.05);
+            background: linear-gradient(90deg, rgba(0, 240, 255, 0.12) 0%, rgba(157, 78, 221, 0.05) 100%);
+            border-color: rgba(0, 240, 255, 0.25);
+        }
+
+        .file-item-info {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-item-info span {
+            font-family: var(--font-mono);
         }
 
         .file-item i {
-            font-size: 1rem;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            transition: color 0.2s;
         }
 
         .file-item.active i {
             color: var(--primary);
         }
 
+        .btn-delete-file {
+            background: none;
+            border: none;
+            color: rgba(244, 63, 94, 0.4);
+            cursor: pointer;
+            padding: 0.2rem;
+            border-radius: 4px;
+            opacity: 0;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .file-item:hover .btn-delete-file {
+            opacity: 1;
+        }
+
+        .btn-delete-file:hover {
+            color: var(--rose);
+            background: rgba(244, 63, 94, 0.1);
+            transform: scale(1.1);
+        }
+
         .new-file-box {
-            padding: 1rem;
+            padding: 1.25rem 1rem;
             border-top: 1px solid var(--border-color);
-            background-color: rgba(0, 0, 0, 0.1);
+            background-color: rgba(6, 9, 19, 0.5);
         }
 
         .input-group {
@@ -274,36 +367,86 @@
         }
 
         input[type="text"] {
-            background-color: var(--bg-base);
+            background-color: rgba(6, 9, 19, 0.8);
             border: 1px solid var(--border-color);
             color: white;
-            padding: 0.4rem 0.6rem;
-            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
             font-family: var(--font-sans);
             font-size: 0.8rem;
             flex: 1;
+            transition: all 0.3s;
         }
 
         input[type="text"]:focus {
             outline: none;
             border-color: var(--primary);
-            box-shadow: 0 0 5px var(--primary-glow);
+            box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.2);
         }
 
+        /* Buttons styling */
         .btn-primary {
             background: linear-gradient(135deg, var(--primary), var(--secondary));
             border: none;
             color: white;
-            padding: 0.4rem 0.8rem;
-            border-radius: 4px;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
             cursor: pointer;
-            font-weight: 500;
+            font-family: var(--font-display);
+            font-weight: 600;
             font-size: 0.8rem;
-            transition: opacity 0.2s;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
         }
 
         .btn-primary:hover {
-            opacity: 0.9;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
+            filter: brightness(1.1);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary-custom {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: var(--font-display);
+            font-weight: 500;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary-custom:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--text-muted);
+        }
+
+        .btn-danger-custom {
+            background: linear-gradient(135deg, var(--rose), #cc005f);
+            border: none;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+        }
+
+        .btn-danger-custom:hover {
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
+            filter: brightness(1.1);
         }
 
         /* Work Area */
@@ -312,15 +455,22 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            background-color: var(--bg-base);
+            background: transparent;
+            min-width: 0;
         }
 
         .tabs-header {
-            background-color: var(--bg-surface);
+            background: rgba(11, 15, 25, 0.5);
+            backdrop-filter: blur(var(--glass-blur));
             border-bottom: 1px solid var(--border-color);
             display: flex;
-            padding: 0.5rem 1.5rem 0 1.5rem;
-            gap: 0.5rem;
+            padding: 0.5rem 1rem 0 1.4rem;
+            gap: 0.35rem;
+            z-index: 4;
+        }
+
+        .tabs-header .tab-btn:first-child {
+            margin-left: 0.2rem;
         }
 
         .tab-btn {
@@ -328,28 +478,28 @@
             border: 1px solid transparent;
             border-bottom: none;
             color: var(--text-muted);
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1.1rem;
             font-family: var(--font-display);
-            font-size: 0.85rem;
-            font-weight: 500;
+            font-size: 0.8rem;
+            font-weight: 600;
             cursor: pointer;
-            border-radius: 6px 6px 0 0;
-            transition: all 0.2s;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.3s;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            position: relative;
         }
 
         .tab-btn:hover {
             color: var(--text-main);
-            background-color: rgba(255, 255, 255, 0.03);
+            background-color: rgba(255, 255, 255, 0.02);
         }
 
         .tab-btn.active {
-            color: white;
+            color: var(--primary);
             background-color: var(--bg-base);
             border-color: var(--border-color);
-            position: relative;
         }
 
         .tab-btn.active::after {
@@ -360,6 +510,18 @@
             right: 0;
             height: 2px;
             background-color: var(--bg-base);
+            z-index: 5;
+        }
+
+        .tab-btn.active::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            border-radius: 8px 8px 0 0;
         }
 
         .tab-content {
@@ -374,7 +536,13 @@
             flex-direction: column;
         }
 
-        /* Editor Tab */
+        #tab-optimizer {
+            overflow-y: auto;
+            overflow-x: hidden;
+            min-height: 0;
+        }
+
+        /* Editor Tab styling */
         .editor-wrapper {
             flex: 1;
             display: flex;
@@ -382,9 +550,9 @@
         }
 
         .editor-toolbar {
-            background-color: var(--bg-surface);
+            background: rgba(13, 20, 38, 0.4);
             border-bottom: 1px solid var(--border-color);
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1.25rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -394,20 +562,22 @@
             flex: 1;
             width: 100%;
             height: 100%;
+            border-radius: 0;
         }
 
-        /* Optimizer Console Tab */
+        /* Optimizer Tab styling */
         .optimizer-wrapper {
             flex: 1;
             display: grid;
             grid-template-columns: 320px 1fr;
-            overflow: hidden;
+            overflow: visible;
+            min-height: 0;
         }
 
         .optimizer-settings {
-            background-color: var(--bg-surface);
+            background: rgba(13, 20, 38, 0.4);
             border-right: 1px solid var(--border-color);
-            padding: 1.25rem;
+            padding: 1.5rem;
             display: flex;
             flex-direction: column;
             gap: 1.25rem;
@@ -416,65 +586,101 @@
 
         .settings-section-title {
             font-family: var(--font-display);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            margin-bottom: 0.5rem;
+            letter-spacing: 0.08em;
+            color: var(--secondary);
+            margin-bottom: 0.25rem;
             border-bottom: 1px solid var(--border-color);
-            padding-bottom: 0.25rem;
+            padding-bottom: 0.35rem;
+            font-weight: 700;
         }
 
         .control-group {
             display: flex;
             flex-direction: column;
-            gap: 0.4rem;
+            gap: 0.45rem;
         }
 
         .control-label {
             font-size: 0.75rem;
+            font-weight: 500;
             color: var(--text-muted);
             display: flex;
             justify-content: space-between;
         }
 
+        .control-label span {
+            letter-spacing: 0.02em;
+        }
+
+        #iters-val {
+            font-family: var(--font-mono);
+            color: var(--primary);
+            font-weight: 600;
+        }
+
         select, input[type="number"] {
-            background-color: var(--bg-base);
+            background-color: rgba(6, 9, 19, 0.7);
             border: 1px solid var(--border-color);
             color: white;
-            padding: 0.5rem;
-            border-radius: 6px;
+            padding: 0.55rem;
+            border-radius: 8px;
             font-family: var(--font-sans);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             width: 100%;
+            transition: all 0.3s;
+        }
+
+        select {
+            color-scheme: dark;
+            background-color: rgba(6, 9, 19, 0.92);
+        }
+
+        select option,
+        select optgroup {
+            background-color: #0b1220;
+            color: #e6f2ff;
+        }
+
+        select option:checked {
+            background-color: #123057;
+            color: #ffffff;
         }
 
         select:focus, input[type="number"]:focus {
             outline: none;
             border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.2);
         }
 
+        /* Toggle sliders */
         .toggle-group {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background-color: rgba(255, 255, 255, 0.02);
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            background-color: rgba(255, 255, 255, 0.015);
+            padding: 0.6rem 0.75rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            transition: border-color 0.2s;
+        }
+
+        .toggle-group:hover {
+            border-color: rgba(0, 240, 255, 0.1);
         }
 
         .toggle-label {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--text-main);
+            font-weight: 500;
         }
 
-        /* Switch styling */
         .switch {
             position: relative;
             display: inline-block;
-            width: 40px;
-            height: 20px;
+            width: 38px;
+            height: 18px;
         }
 
         .switch input {
@@ -491,19 +697,19 @@
             right: 0;
             bottom: 0;
             background-color: rgba(255, 255, 255, 0.1);
-            transition: .4s;
+            transition: .3s;
             border-radius: 20px;
         }
 
         .slider:before {
             position: absolute;
             content: "";
-            height: 14px;
-            width: 14px;
+            height: 12px;
+            width: 12px;
             left: 3px;
             bottom: 3px;
-            background-color: white;
-            transition: .4s;
+            background-color: #cbd5e1;
+            transition: .3s;
             border-radius: 50%;
         }
 
@@ -513,56 +719,77 @@
 
         input:checked + .slider:before {
             transform: translateX(20px);
+            background-color: white;
         }
 
         .btn-run {
-            background: linear-gradient(135deg, var(--emerald), #059669);
+            background: linear-gradient(135deg, var(--emerald), #02b192);
             border: none;
             color: white;
             padding: 0.75rem 1rem;
-            border-radius: 6px;
-            font-weight: 600;
+            border-radius: 8px;
+            font-weight: 700;
             cursor: pointer;
             font-family: var(--font-display);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 0.5rem;
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
             margin-top: auto;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .btn-run:hover {
-            opacity: 0.95;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
+            transform: translateY(-1px);
+            filter: brightness(1.05);
+        }
+
+        .btn-run:active {
+            transform: translateY(0);
         }
 
         .btn-stop {
-            background: linear-gradient(135deg, var(--rose), #dc2626);
+            background: linear-gradient(135deg, var(--rose), #d6006c);
             border: none;
             color: white;
             padding: 0.75rem 1rem;
-            border-radius: 6px;
-            font-weight: 600;
+            border-radius: 8px;
+            font-weight: 700;
             cursor: pointer;
             font-family: var(--font-display);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             display: none;
             align-items: center;
             justify-content: center;
             gap: 0.5rem;
-            box-shadow: 0 0 15px rgba(244, 63, 94, 0.3);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
             margin-top: auto;
+            transition: all 0.3s ease;
+        }
+
+        .btn-stop:hover {
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
+            transform: translateY(-1px);
+        }
+
+        .btn-stop:active {
+            transform: translateY(0);
         }
 
         .optimizer-monitor {
             display: flex;
             flex-direction: column;
-            overflow: hidden;
-            padding: 1.25rem;
+            overflow: visible;
+            padding: 1.5rem;
             gap: 1.25rem;
+            min-height: 0;
+            flex: 1.12;
         }
 
+        /* Monitor Cards styling */
         .monitor-cards {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -570,82 +797,321 @@
         }
 
         .monitor-card {
-            background-color: var(--bg-surface);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 1rem;
+            border-radius: 12px;
+            padding: 1.1rem 1.25rem;
             display: flex;
             flex-direction: column;
-            gap: 0.25rem;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            gap: 0.35rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .monitor-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--border-color);
+        }
+
+        .monitor-card:nth-child(1)::before { background: var(--amber); }
+        .monitor-card:nth-child(2)::before { background: var(--primary); }
+        .monitor-card:nth-child(3)::before { background: var(--secondary); }
+        .monitor-card:nth-child(4)::before { background: var(--emerald); }
+
+        .monitor-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
         }
 
         .card-label {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.08em;
+            font-weight: 600;
         }
 
         .card-value {
             font-family: var(--font-display);
-            font-size: 1.5rem;
-            font-weight: 700;
+            font-size: 1.45rem;
+            font-weight: 800;
             color: white;
+            letter-spacing: -0.01em;
         }
 
         .progress-section {
-            background-color: var(--bg-surface);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 1rem;
+            border-radius: 12px;
+            padding: 1.1rem 1.25rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
         }
 
         .progress-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.5rem;
-            font-size: 0.85rem;
+            margin-bottom: 0.65rem;
+            font-size: 0.8rem;
+            color: var(--text-main);
         }
 
         .progress-bar-container {
-            height: 10px;
-            background-color: rgba(255, 255, 255, 0.05);
-            border-radius: 5px;
+            height: 8px;
+            background-color: rgba(255, 255, 255, 0.06);
+            border-radius: 4px;
             overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.02);
         }
 
         .progress-bar-fill {
             height: 100%;
             background: linear-gradient(90deg, var(--primary), var(--secondary));
             width: 0%;
-            transition: width 0.3s ease;
+            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
+        /* Console styling */
         .console-terminal {
-            flex: 1;
-            background-color: #05070c;
+            flex: 1.6;
+            min-height: 340px;
+            background-color: #04060b;
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 1rem;
+            border-radius: 12px;
+            padding: 1.25rem;
             font-family: var(--font-mono);
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 0.4rem;
-            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
+            gap: 0.5rem;
+            box-shadow: inset 0 4px 20px rgba(0, 0, 0, 0.7);
+        }
+
+        .benchmark-panel,
+        .inspector-panel {
+            background: rgba(4, 6, 11, 0.75);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem 1.1rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            flex: 0 0 auto;
+        }
+
+        .live-chart-wrap {
+            position: relative;
+            width: 100%;
+            height: 220px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: rgba(2, 6, 14, 0.72);
+            padding: 0.45rem;
+        }
+
+        .live-chart-wrap canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .panel-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .panel-title {
+            font-family: var(--font-display);
+            font-size: 0.95rem;
+            font-weight: 800;
+            color: white;
+        }
+
+        .panel-subtitle {
+            font-size: 0.76rem;
+            color: var(--text-muted);
+        }
+
+        .history-table-wrap {
+            overflow: auto;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.76rem;
+        }
+
+        .history-table th,
+        .history-table td {
+            padding: 0.6rem 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            white-space: nowrap;
+        }
+
+        .history-table th {
+            position: sticky;
+            top: 0;
+            background: #070b14;
+            color: var(--text-muted);
+            font-size: 0.69rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            z-index: 1;
+        }
+
+        .history-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .status-pill,
+        .alert-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.25rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+
+        .status-pill.good,
+        .alert-pill.good {
+            background: rgba(33, 197, 94, 0.12);
+            color: #7ff0a5;
+        }
+
+        .status-pill.warn,
+        .alert-pill.warn {
+            background: rgba(251, 191, 36, 0.12);
+            color: #fcd34d;
+        }
+
+        .status-pill.bad,
+        .alert-pill.bad {
+            background: rgba(248, 113, 113, 0.12);
+            color: #fca5a5;
+        }
+
+        .alert-stack {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-bottom: 0.9rem;
+        }
+
+        .inspector-grid {
+            display: grid;
+            grid-template-columns: minmax(220px, 0.95fr) auto auto;
+            gap: 0.65rem;
+            align-items: center;
+            margin-bottom: 0.85rem;
+        }
+
+        .inspector-select,
+        .inspector-btn,
+        .inspector-textarea {
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-main);
+            font-family: var(--font-mono);
+        }
+
+        .inspector-select option,
+        .inspector-select optgroup {
+            background-color: #0b1220;
+            color: #e6f2ff;
+        }
+
+        .inspector-select,
+        .inspector-btn {
+            height: 42px;
+            padding: 0 0.75rem;
+        }
+
+        .inspector-btn {
+            cursor: pointer;
+            font-family: var(--font-display);
+            font-weight: 700;
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .inspector-btn:hover {
+            transform: translateY(-1px);
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+
+        .inspector-detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.85rem;
+        }
+
+        .inspector-textarea {
+            width: 100%;
+            min-height: 240px;
+            padding: 0.85rem;
+            resize: vertical;
+            line-height: 1.4;
+            font-size: 0.74rem;
+            color: #d6e0ff;
+            background: #04060b;
+        }
+
+        .inspector-readout {
+            background: #04060b;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 0.8rem;
+            min-height: 240px;
+            overflow: auto;
+            font-size: 0.76rem;
+            line-height: 1.55;
+            color: #d6e0ff;
+            white-space: pre-wrap;
+        }
+
+        .inspector-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-bottom: 0.65rem;
+        }
+
+        .inspector-meta .chip {
+            padding: 0.22rem 0.5rem;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-main);
+            font-size: 0.68rem;
+            font-weight: 600;
         }
 
         .log-entry {
-            line-height: 1.4;
-            animation: fadeIn 0.2s ease-out;
+            line-height: 1.5;
+            animation: fadeIn 0.25s ease-out;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.01);
+            padding-bottom: 0.25rem;
         }
 
         .log-time {
-            color: var(--text-muted);
+            color: rgba(0, 240, 255, 0.5);
             margin-right: 0.5rem;
+            font-weight: 500;
         }
 
         .log-msg {
@@ -654,118 +1120,152 @@
 
         .log-stage {
             color: var(--secondary);
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .log-error {
             color: var(--rose);
+            background: rgba(255, 0, 127, 0.06);
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            border-left: 2px solid var(--rose);
         }
 
         .log-success {
             color: var(--emerald);
+            background: rgba(13, 242, 201, 0.06);
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            border-left: 2px solid var(--emerald);
         }
 
-        /* Diff Viewer Tab */
+        /* Diff Viewer Tab styling */
         #diff-container {
             flex: 1;
             width: 100%;
             height: 100%;
         }
 
-        /* Roofline Tab */
+        /* Roofline Analyzer Tab styling */
         .roofline-wrapper {
             flex: 1;
             display: grid;
             grid-template-columns: 1fr 340px;
-            padding: 1.25rem;
-            gap: 1.25rem;
+            padding: 1.5rem;
+            gap: 1.5rem;
             overflow: hidden;
         }
 
         .roofline-chart-container {
-            background-color: var(--bg-surface);
+            background: rgba(13, 20, 38, 0.35);
+            backdrop-filter: blur(8px);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
+            border-radius: 12px;
             padding: 1.5rem;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             position: relative;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
         }
 
         .roofline-info {
-            background-color: var(--bg-surface);
+            background: rgba(13, 20, 38, 0.35);
+            backdrop-filter: blur(8px);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 1.25rem;
+            border-radius: 12px;
+            padding: 1.5rem;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
             gap: 1rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .roofline-info h3 {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: var(--primary);
         }
 
         .info-card {
-            background-color: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 6px;
-            padding: 0.75rem;
+            background: rgba(6, 9, 19, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            transition: all 0.2s;
+        }
+
+        .info-card:hover {
+            border-color: rgba(255, 255, 255, 0.08);
+            background: rgba(6, 9, 19, 0.55);
         }
 
         .info-card h4 {
             font-family: var(--font-display);
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             color: var(--text-muted);
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.35rem;
             text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
         }
 
         .info-card p {
             font-size: 0.9rem;
-            font-weight: 500;
+            font-weight: 600;
+            color: white;
         }
 
         .info-card.bound-memory {
             border-left: 4px solid var(--amber);
+            background: linear-gradient(90deg, rgba(255, 170, 0, 0.05) 0%, transparent 100%);
         }
 
         .info-card.bound-compute {
             border-left: 4px solid var(--primary);
+            background: linear-gradient(90deg, rgba(0, 240, 255, 0.05) 0%, transparent 100%);
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(4px); }
+            from { opacity: 0; transform: translateY(6px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Modal Overlay for prompt / errors */
+        /* Removed pulsing keyframes */
+
+        /* Modal overlay styling */
         .modal {
-            position: absolute;
+            position: fixed;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: rgba(0, 0, 0, 0.65);
-            backdrop-filter: blur(4px);
-            z-index: 100;
+            background-color: rgba(4, 6, 11, 0.8);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
             display: none;
             justify-content: center;
             align-items: center;
         }
 
         .modal-card {
-            background-color: var(--bg-surface);
+            background: rgba(13, 20, 38, 0.9);
             border: 1px solid var(--border-color);
             width: 90%;
             max-width: 600px;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border-radius: 16px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
             overflow: hidden;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(12px);
         }
 
         .modal-header {
-            padding: 1rem 1.25rem;
+            padding: 1.1rem 1.5rem;
             border-bottom: 1px solid var(--border-color);
             display: flex;
             justify-content: space-between;
@@ -773,20 +1273,231 @@
         }
 
         .modal-body {
-            padding: 1.25rem;
-            max-height: 400px;
+            padding: 1.5rem;
+            max-height: 450px;
             overflow-y: auto;
             font-family: var(--font-mono);
-            font-size: 0.8rem;
-            background-color: rgba(0, 0, 0, 0.2);
+            font-size: 0.78rem;
+            background-color: rgba(6, 9, 19, 0.45);
             white-space: pre-wrap;
+            line-height: 1.5;
+            color: #e2e8f0;
         }
 
         .modal-footer {
-            padding: 0.75rem 1.25rem;
+            padding: 1rem 1.5rem;
             border-top: 1px solid var(--border-color);
             display: flex;
             justify-content: flex-end;
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            z-index: 9999;
+            pointer-events: none;
+        }
+
+        .toast {
+            pointer-events: auto;
+            min-width: 320px;
+            max-width: 450px;
+            background: rgba(13, 20, 38, 0.85);
+            backdrop-filter: blur(12px);
+            border-left: 4px solid var(--primary);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            padding: 1rem 1.25rem;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            transform: translateX(120%);
+            transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast-icon {
+            font-size: 1.15rem;
+            flex-shrink: 0;
+            margin-top: 0.1rem;
+        }
+
+        .toast-content {
+            flex: 1;
+            font-size: 0.82rem;
+            line-height: 1.4;
+            font-family: var(--font-sans);
+        }
+
+        .toast-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 0.1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+            margin-top: 0.1rem;
+        }
+
+        .toast-close:hover {
+            color: var(--text-main);
+        }
+
+        /* Toast Types */
+        .toast-success {
+            border-left-color: var(--emerald);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+        .toast-success .toast-icon {
+            color: var(--emerald);
+        }
+
+        .toast-error {
+            border-left-color: var(--rose);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+        .toast-error .toast-icon {
+            color: var(--rose);
+        }
+
+        .toast-warning {
+            border-left-color: var(--amber);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+        .toast-warning .toast-icon {
+            color: var(--amber);
+        }
+
+        .toast-info {
+            border-left-color: var(--primary);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+        .toast-info .toast-icon {
+            color: var(--primary);
+        }
+
+        /* Welcome Screen Styling */
+        .welcome-screen-wrapper {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+            background: radial-gradient(circle at center, rgba(13, 20, 38, 0.2) 0%, transparent 70%);
+            height: 100%;
+            overflow-y: auto;
+        }
+
+        .welcome-card {
+            background: rgba(13, 20, 38, 0.45);
+            backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 2.5rem;
+            max-width: 720px;
+            text-align: center;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        .welcome-icon {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1rem;
+            display: inline-block;
+        }
+
+        .welcome-card h2 {
+            font-family: var(--font-display);
+            font-size: 1.75rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ffffff 40%, var(--primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.75rem;
+            letter-spacing: -0.01em;
+        }
+
+        .welcome-card p {
+            color: var(--text-muted);
+            font-size: 0.88rem;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .welcome-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1.25rem;
+            text-align: left;
+        }
+
+        .step-card {
+            background: rgba(6, 9, 19, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 1.25rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .step-card:hover {
+            transform: translateY(-4px);
+            background: rgba(6, 9, 19, 0.6);
+            border-color: rgba(0, 240, 255, 0.15);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .step-num {
+            position: absolute;
+            top: -0.5rem;
+            right: -0.25rem;
+            font-size: 3.5rem;
+            font-weight: 900;
+            font-family: var(--font-display);
+            color: rgba(255, 255, 255, 0.03);
+            line-height: 1;
+            transition: color 0.3s;
+            user-select: none;
+        }
+
+        .step-card:hover .step-num {
+            color: rgba(0, 240, 255, 0.06);
+        }
+
+        .step-card h4 {
+            font-family: var(--font-display);
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+            letter-spacing: 0.02em;
+        }
+
+        .step-card p {
+            font-size: 0.78rem;
+            line-height: 1.5;
+            color: var(--text-muted);
+            margin-bottom: 0;
         }
     </style>
 </head>
@@ -796,7 +1507,44 @@
     <header>
         <div class="logo-section">
             <div class="logo-icon">
-                <i class="fa-solid fa-bolt"></i>
+                <svg viewBox="0 0 32 32" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="cuda-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#76b900" /> <!-- NVIDIA green -->
+                            <stop offset="50%" stop-color="#3b82f6" /> <!-- AI blue -->
+                            <stop offset="100%" stop-color="#8b5cf6" /> <!-- purple -->
+                        </linearGradient>
+                        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="1.5" result="blur" />
+                            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                        </filter>
+                    </defs>
+
+                    <!-- Outer Chip Pins (CUDA GPU Representation) -->
+                    <!-- Top Pins -->
+                    <path d="M10 5V2M16 5V2M22 5V2" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+                    <!-- Bottom Pins -->
+                    <path d="M10 27V30M16 27V30M22 27V30" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+                    <!-- Left Pins -->
+                    <path d="M5 10H2M5 16H2M5 22H2" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+                    <!-- Right Pins -->
+                    <path d="M27 10H30M27 16H30M27 22H30" stroke="url(#cuda-gradient)" stroke-width="1.5" stroke-linecap="round" />
+
+                    <!-- Chip Core (Main Frame) -->
+                    <rect x="5" y="5" width="22" height="22" rx="4" stroke="url(#cuda-gradient)" stroke-width="2" fill="rgba(19, 27, 46, 0.85)" />
+
+                    <!-- Inner Circuit/Neural Pattern (LLM Representation) -->
+                    <circle cx="10" cy="10" r="1.5" fill="#76b900" />
+                    <circle cx="22" cy="10" r="1.5" fill="#3b82f6" />
+                    <circle cx="10" cy="22" r="1.5" fill="#8b5cf6" />
+                    <circle cx="22" cy="22" r="1.5" fill="#a855f7" />
+                    
+                    <!-- Thin circuit connections -->
+                    <path d="M11.5 10H14.5M17.5 10H20.5M10 11.5V14.5M10 17.5V20.5M22 11.5V14.5M22 17.5V20.5M11.5 22H14.5M17.5 22H20.5" stroke="rgba(255,255,255,0.15)" stroke-width="1" />
+
+                    <!-- Lightning Bolt (Optimizer / Performance Speedup) -->
+                    <path d="M17.5 8.5L11.5 16.5H16.5L14.5 23.5L20.5 15.5H15.5L17.5 8.5Z" fill="url(#cuda-gradient)" filter="url(#glow)" />
+                </svg>
             </div>
             <div>
                 <h1>CUDA LLM Optimizer Dashboard</h1>
@@ -875,7 +1623,36 @@
 
             <!-- Tab Content: Editor -->
             <div class="tab-content active" id="tab-editor">
-                <div class="editor-wrapper">
+                <!-- Welcome Screen (shown when no file selected) -->
+                <div id="welcome-screen" class="welcome-screen-wrapper">
+                    <div class="welcome-card">
+                        <div class="welcome-icon">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        </div>
+                        <h2>CUDA LLM Optimizer</h2>
+                        <p>Optimize CUDA Kernels effortlessly, powered by Large Language Models (LLM) and real-time hardware profiling.</p>
+                        <div class="welcome-steps">
+                            <div class="step-card">
+                                <span class="step-num">1</span>
+                                <h4>Select or Create a File</h4>
+                                <p>Choose a <code>.cu</code> file from the sidebar, or enter a name and click <strong>New</strong> to create one.</p>
+                            </div>
+                            <div class="step-card">
+                                <span class="step-num">2</span>
+                                <h4>Configure Parameters</h4>
+                                <p>Switch to the <strong>Autonomous Optimizer</strong> tab, customize your parameters, and start optimization.</p>
+                            </div>
+                            <div class="step-card">
+                                <span class="step-num">3</span>
+                                <h4>View Comparisons</h4>
+                                <p>Inspect code changes and metrics under the <strong>Diff Viewer</strong> and <strong>Roofline Analyzer</strong> tabs.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Editor Wrapper (hidden initially until a file is selected) -->
+                <div class="editor-wrapper" id="editor-wrapper" style="display: none;">
                     <div class="editor-toolbar">
                         <span id="editor-file-path" style="font-size: 0.8rem; font-weight: 500; font-family: var(--font-mono); color: var(--text-muted);">
                             No file selected
@@ -890,7 +1667,7 @@
 
             <!-- Tab Content: Optimizer Console -->
             <div class="tab-content" id="tab-optimizer">
-                <div class="tab-content active" style="display: flex; flex-direction: row; height: 100%;">
+                <div class="optimizer-wrapper">
                     <!-- Optimization Settings Sidebar -->
                     <div class="optimizer-settings">
                         <span class="settings-section-title">Parameters</span>
@@ -937,6 +1714,34 @@
                                 <option value="code">Code API driven</option>
                                 <option value="none">Standard Timers</option>
                             </select>
+                        </div>
+
+                        <div class="control-group">
+                            <label class="control-label">Optimization Preset</label>
+                            <select id="opt-preset">
+                                <option value="balanced">Balanced</option>
+                            </select>
+                        </div>
+
+                        <div class="control-group">
+                            <label class="control-label">Regression Guard Threshold (%)</label>
+                            <input type="number" id="opt-regression-threshold" value="5" min="0" max="200" step="0.5">
+                        </div>
+
+                        <div class="toggle-group">
+                            <span class="toggle-label">Enable Regression Guard</span>
+                            <label class="switch">
+                                <input type="checkbox" id="opt-regression-guard-enabled" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="toggle-group">
+                            <span class="toggle-label">Auto Rollback On Regression</span>
+                            <label class="switch">
+                                <input type="checkbox" id="opt-auto-rollback" checked>
+                                <span class="slider"></span>
+                            </label>
                         </div>
 
                         <div class="toggle-group">
@@ -994,11 +1799,80 @@
                             </div>
                         </div>
 
+                        <div class="benchmark-panel" id="live-benchmark-panel">
+                            <div class="panel-header-row">
+                                <div>
+                                    <div class="panel-title">Live Benchmark Chart</div>
+                                    <div class="panel-subtitle" id="live-chart-subtitle">Real-time latency and speedup series during optimization.</div>
+                                </div>
+                                <span class="status-pill warn" id="regression-guard-pill">Guard ON</span>
+                            </div>
+                            <div class="live-chart-wrap">
+                                <canvas id="live-benchmark-chart"></canvas>
+                            </div>
+                        </div>
+
                         <!-- Active Log Console -->
                         <div class="console-terminal" id="console-terminal">
                             <div class="log-entry">
                                 <span class="log-time">[System]</span>
                                 <span class="log-msg">Dashboard ready. Select a CUDA file and configure optimization parameters.</span>
+                            </div>
+                        </div>
+
+                        <div class="benchmark-panel">
+                            <div class="panel-header-row">
+                                <div>
+                                    <div class="panel-title">Benchmark History & Regression Alerts</div>
+                                    <div class="panel-subtitle">Recent runs across the dashboard. Alerts appear when profiling fails repeatedly or latency regresses.</div>
+                                </div>
+                                <span class="alert-pill warn" id="benchmark-alert-pill">0 alerts</span>
+                            </div>
+                            <div class="alert-stack" id="benchmark-alert-stack"></div>
+                            <div class="history-table-wrap">
+                                <table class="history-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Run</th>
+                                            <th>Preset</th>
+                                            <th>Best Latency</th>
+                                            <th>Speedup</th>
+                                            <th>Status</th>
+                                            <th>Alerts</th>
+                                            <th>Inspect</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="benchmark-history-body">
+                                        <tr><td colspan="7" style="color: var(--text-muted);">No benchmark history yet.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="inspector-panel">
+                            <div class="panel-header-row">
+                                <div>
+                                    <div class="panel-title">Verification Replay & Failure Inspector</div>
+                                    <div class="panel-subtitle">Inspect logs, raw profiler output, code snapshots, and replay a specific failed iteration.</div>
+                                </div>
+                                <span class="status-pill good" id="inspector-status-pill">Idle</span>
+                            </div>
+                            <div class="alert-stack" id="failure-triage-stack"></div>
+                            <div class="panel-subtitle" id="failure-triage-note">Failure triage will appear after the first optimization iteration.</div>
+                            <div class="inspector-grid">
+                                <select id="failure-run-select" class="inspector-select">
+                                    <option value="">Select a run</option>
+                                </select>
+                                <select id="failure-iteration-select" class="inspector-select">
+                                    <option value="">Select an iteration</option>
+                                </select>
+                                <button class="inspector-btn" id="load-inspector-diff-btn">Load Diff</button>
+                                <button class="inspector-btn" id="replay-iteration-btn">Replay Iteration</button>
+                            </div>
+                            <div class="inspector-meta" id="inspector-meta"></div>
+                            <div class="inspector-detail-grid">
+                                <textarea class="inspector-textarea" id="inspector-code-snapshot" readonly placeholder="Code snapshot will appear here."></textarea>
+                                <div class="inspector-readout" id="inspector-output">Select a benchmark run and iteration to inspect the failure details.</div>
                             </div>
                         </div>
                     </div>
@@ -1027,6 +1901,13 @@
                         <div class="info-card" id="roofline-bottleneck-card">
                             <h4>Primary Bottleneck</h4>
                             <p id="roofline-bottleneck-val">-</p>
+                        </div>
+
+                        <div class="info-card">
+                            <h4>FP/INT Operations</h4>
+                            <p id="roofline-fp-int-val" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted); line-height: 1.4;">
+                                Select a file to view FP/INT breakdown.
+                            </p>
                         </div>
 
                         <div class="info-card">
@@ -1064,10 +1945,33 @@
         </div>
     </div>
 
+    <!-- Confirm Delete Modal -->
+    <div class="modal" id="delete-confirm-modal">
+        <div class="modal-card" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3 style="font-family: var(--font-display); color: var(--rose);">Confirm File Deletion</h3>
+                <button class="btn-icon" onclick="closeDeleteModal()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem; text-align: center; font-family: var(--font-sans); font-size: 0.9rem;">
+                <p>Are you sure you want to delete <strong id="delete-filename-label" style="color: white; font-family: var(--font-mono);">-</strong>?</p>
+                <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.5rem;">This action will permanently delete the file from the workspace and cannot be undone.</p>
+            </div>
+            <div class="modal-footer" style="gap: 0.5rem;">
+                <button class="btn-secondary-custom" onclick="closeDeleteModal()">Cancel</button>
+                <button class="btn-danger-custom" id="confirm-delete-btn">Delete File</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
+
     <!-- Monaco Editor Loader -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs/loader.min.js"></script>
     <script>
-        // Set up Monaco Editor
+
         let editor = null;
         let diffEditor = null;
         let selectedFile = null;
@@ -1075,12 +1979,115 @@
         let isOptimizing = false;
         let pollTimer = null;
         let rooflineChart = null;
+        let benchmarkRuns = [];
+        let currentOptimizeState = null;
+        let selectedBenchmarkRun = null;
+        let selectedBenchmarkIteration = null;
+        let presetCatalog = [];
+        let lastDiffOriginalCode = null;
+        let lastDiffModifiedCode = null;
+        let lastDiffRenderIteration = -1;
+        let lastDiffRenderStatus = '';
+        let lastDiffRenderAtMs = 0;
+        let lastConsoleLogSignature = '';
+        let liveBenchmarkChart = null;
+        let lastLiveSeriesSignature = '';
+        let lastTriageSignature = '';
+        const DIFF_POLL_REFRESH_MS = 2200;
+
+        function setDiffEditorModels(originalCode, modifiedCode) {
+            if (!diffEditor || !window.monaco || !monaco.editor) return;
+
+            const safeOriginal = originalCode || '';
+            const safeModified = modifiedCode || '';
+
+            // Avoid model churn during polling when diff content has not changed.
+            if (lastDiffOriginalCode === safeOriginal && lastDiffModifiedCode === safeModified) {
+                return;
+            }
+
+            const oldModels = diffEditor.getModel();
+            if (oldModels) {
+                if (oldModels.original) oldModels.original.dispose();
+                if (oldModels.modified && oldModels.modified !== oldModels.original) oldModels.modified.dispose();
+            }
+
+            diffEditor.setModel({
+                original: monaco.editor.createModel(safeOriginal, 'cpp'),
+                modified: monaco.editor.createModel(safeModified, 'cpp')
+            });
+
+            lastDiffOriginalCode = safeOriginal;
+            lastDiffModifiedCode = safeModified;
+        }
+
+        function isTabActive(tabId) {
+            const activeBtn = document.querySelector('.tab-btn.active');
+            return !!activeBtn && activeBtn.getAttribute('data-tab') === tabId;
+        }
+
+        function renderOptimizeLogs(logs) {
+            const consoleTerminal = document.getElementById('console-terminal');
+            if (!consoleTerminal) return;
+
+            const list = Array.isArray(logs) ? logs : [];
+            const first = list.length > 0 ? list[0] : null;
+            const last = list.length > 0 ? list[list.length - 1] : null;
+            const signature = `${list.length}|${first ? first.timestamp : ''}|${last ? last.timestamp : ''}|${last ? last.message : ''}`;
+
+            if (signature === lastConsoleLogSignature) {
+                return;
+            }
+
+            lastConsoleLogSignature = signature;
+            consoleTerminal.innerHTML = '';
+
+            list.forEach(log => {
+                const timeStr = new Date(log.timestamp * 1000).toLocaleTimeString();
+                const div = document.createElement('div');
+                div.className = 'log-entry';
+
+                let classStyle = 'log-msg';
+                if (log.message.includes('changed to:')) classStyle = 'log-stage';
+                if (log.message.includes('FAILED') || log.message.includes('Error') || log.message.includes('mismatch')) classStyle = 'log-error';
+                if (log.message.includes('achieved') || log.message.includes('success')) classStyle = 'log-success';
+
+                div.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="${classStyle}">${escapeHtml(log.message)}</span>`;
+                consoleTerminal.appendChild(div);
+            });
+
+            consoleTerminal.scrollTop = consoleTerminal.scrollHeight;
+        }
+
+        function maybeRefreshDiffFromStatus(data, force = false) {
+            if (!diffEditor || !data || !data.original_code || !data.best_code) {
+                return;
+            }
+
+            const status = data.status || '';
+            const iteration = Number.isFinite(data.current_iteration) ? data.current_iteration : -1;
+            const now = Date.now();
+
+            const isTerminal = status === 'completed' || status === 'failed' || status === 'stopped';
+            const diffTabActive = isTabActive('tab-diff');
+            const statusChanged = status !== lastDiffRenderStatus;
+            const iterationChanged = iteration !== lastDiffRenderIteration;
+            const throttleElapsed = (now - lastDiffRenderAtMs) >= DIFF_POLL_REFRESH_MS;
+
+            if (force || isTerminal || (diffTabActive && (statusChanged || iterationChanged || throttleElapsed))) {
+                setDiffEditorModels(data.original_code, data.best_code);
+                lastDiffRenderAtMs = now;
+                lastDiffRenderIteration = iteration;
+                lastDiffRenderStatus = status;
+            }
+        }
 
         require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
         require(['vs/editor/editor.main'], function () {
-            // Register C++ as language for CUDA
+
             editor = monaco.editor.create(document.getElementById('editor-container'), {
-                value: `// Select a file from the sidebar or click "New" to start.\n`,
+                value: `// Select a file from the sidebar or click "New" to start.
+`,
                 language: 'cpp',
                 theme: 'vs-dark',
                 automaticLayout: true,
@@ -1099,7 +2106,7 @@
             });
         });
 
-        // Tabs switching
+
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1107,35 +2114,169 @@
                 
                 btn.classList.add('active');
                 const contentId = btn.getAttribute('data-tab');
-                document.getElementById(contentId).classList.add('active');
+                const contentElement = document.getElementById(contentId);
+                if (contentElement) {
+                    contentElement.classList.add('active');
+                }
 
-                // Relayout Monaco editors on tab change
+            
                 if (contentId === 'tab-editor' && editor) {
                     editor.layout();
                 } else if (contentId === 'tab-diff' && diffEditor) {
                     diffEditor.layout();
+                    maybeRefreshDiffFromStatus(currentOptimizeState, true);
                 }
             });
         });
 
-        // UI Event Listeners
-        document.getElementById('refresh-files-btn').addEventListener('click', fetchFilesList);
-        document.getElementById('create-file-btn').addEventListener('click', createNewFile);
-        document.getElementById('save-file-btn').addEventListener('click', saveActiveFile);
-        document.getElementById('start-opt-btn').addEventListener('click', startOptimization);
-        document.getElementById('stop-opt-btn').addEventListener('click', stopOptimization);
 
-        // Update range value indicators
-        document.getElementById('opt-iters').addEventListener('input', (e) => {
-            document.getElementById('iters-val').innerText = e.target.value;
-        });
+        const refreshFilesBtn = document.getElementById('refresh-files-btn');
+        if (refreshFilesBtn) {
+            refreshFilesBtn.addEventListener('click', fetchFilesList);
+        }
+        const createFileBtn = document.getElementById('create-file-btn');
+        if (createFileBtn) {
+            createFileBtn.addEventListener('click', createNewFile);
+        }
+        const saveFileBtn = document.getElementById('save-file-btn');
+        if (saveFileBtn) {
+            saveFileBtn.addEventListener('click', saveActiveFile);
+        }
+        const startOptBtn = document.getElementById('start-opt-btn');
+        if (startOptBtn) {
+            startOptBtn.addEventListener('click', startOptimization);
+        }
+        const stopOptBtn = document.getElementById('stop-opt-btn');
+        if (stopOptBtn) {
+            stopOptBtn.addEventListener('click', stopOptimization);
+        }
+        const optPreset = document.getElementById('opt-preset');
+        if (optPreset) {
+            optPreset.addEventListener('change', (e) => applyPresetConfig(e.target.value));
+        }
+        const failureRunSelect = document.getElementById('failure-run-select');
+        if (failureRunSelect) {
+            failureRunSelect.addEventListener('change', (e) => selectInspectorRun(e.target.value));
+        }
+        const failureIterationSelect = document.getElementById('failure-iteration-select');
+        if (failureIterationSelect) {
+            failureIterationSelect.addEventListener('change', (e) => selectInspectorIteration(e.target.value));
+        }
+        const loadInspectorDiffBtn = document.getElementById('load-inspector-diff-btn');
+        if (loadInspectorDiffBtn) {
+            loadInspectorDiffBtn.addEventListener('click', loadInspectorDiff);
+        }
+        const replayIterationBtn = document.getElementById('replay-iteration-btn');
+        if (replayIterationBtn) {
+            replayIterationBtn.addEventListener('click', replaySelectedIteration);
+        }
 
-        // Initial Data Fetch
+       
+        const optIters = document.getElementById('opt-iters');
+        if (optIters) {
+            optIters.addEventListener('input', (e) => {
+                const itersVal = document.getElementById('iters-val');
+                if (itersVal) {
+                    itersVal.innerText = e.target.value;
+                }
+            });
+        }
+
+      
         fetchFilesList();
         fetchSystemStatus();
+        fetchOptimizationPresets();
+        fetchBenchmarkHistory();
         setInterval(fetchSystemStatus, 2000);
 
-        // Fetch list of files
+       
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            
+            let iconClass = 'fa-circle-info';
+            if (type === 'success') iconClass = 'fa-circle-check';
+            if (type === 'error') iconClass = 'fa-circle-xmark';
+            if (type === 'warning') iconClass = 'fa-circle-exclamation';
+            
+            toast.innerHTML = `
+                <i class="fa-solid ${iconClass} toast-icon"></i>
+                <div class="toast-content">${message}</div>
+                <button class="toast-close" title="Close">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            `;
+            
+            toast.querySelector('.toast-close').addEventListener('click', () => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 400);
+            });
+            
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('show');
+            }, 10);
+            
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.classList.remove('show');
+                    setTimeout(() => toast.remove(), 400);
+                }
+            }, 4000);
+        }
+
+      
+        let fileToDelete = null;
+
+        function openDeleteModal(filePath) {
+            fileToDelete = filePath;
+            document.getElementById('delete-filename-label').innerText = filePath;
+            document.getElementById('delete-confirm-modal').style.display = 'flex';
+        }
+
+        function closeDeleteModal() {
+            fileToDelete = null;
+            document.getElementById('delete-confirm-modal').style.display = 'none';
+        }
+
+        document.getElementById('confirm-delete-btn').addEventListener('click', () => {
+            if (!fileToDelete) return;
+            
+            fetch('/api/file/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: jsonStringify({ path: fileToDelete })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showToast(`File ${fileToDelete} deleted successfully!`, 'success');
+                    
+                    if (selectedFile === fileToDelete) {
+                        selectedFile = null;
+                        selectedFileContent = "";
+                        if (editor) editor.setValue("// Select a file from the sidebar or click \"New\" to start.\n");
+                        document.getElementById('editor-file-path').innerText = "No file selected";
+                        document.getElementById('welcome-screen').style.display = 'flex';
+                        document.getElementById('editor-wrapper').style.display = 'none';
+                    }
+                    
+                    closeDeleteModal();
+                    fetchFilesList();
+                } else {
+                    showToast(`Failed to delete file: ${data.error}`, 'error');
+                    closeDeleteModal();
+                }
+            })
+            .catch(err => {
+                showToast(`Error deleting file: ${err}`, 'error');
+                closeDeleteModal();
+            });
+        });
+
+
         function fetchFilesList() {
             fetch('/api/files')
                 .then(res => res.json())
@@ -1149,21 +2290,38 @@
                         if (file === selectedFile) div.classList.add('active');
                         
                         div.innerHTML = `
-                            <i class="fa-solid fa-code"></i>
-                            <span>${file}</span>
+                            <div class="file-item-info">
+                                <i class="fa-solid fa-code"></i>
+                                <span>${file}</span>
+                            </div>
+                            <button class="btn-delete-file" title="Delete File">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
                         `;
-                        div.addEventListener('click', () => selectFile(file));
+                        
+                        div.querySelector('.file-item-info').addEventListener('click', () => selectFile(file));
+                        div.querySelector('.btn-delete-file').addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            openDeleteModal(file);
+                        });
+                        
                         container.appendChild(div);
                     });
                 })
                 .catch(err => console.error("Error fetching files:", err));
         }
 
-        // Select a file to view/edit
         function selectFile(filePath) {
+            if (!filePath) {
+                document.getElementById('welcome-screen').style.display = 'flex';
+                document.getElementById('editor-wrapper').style.display = 'none';
+                return;
+            }
+
             selectedFile = filePath;
             document.querySelectorAll('.file-item').forEach(item => {
-                if (item.querySelector('span').innerText === filePath) {
+                const span = item.querySelector('span');
+                if (span && span.innerText === filePath) {
                     item.classList.add('active');
                 } else {
                     item.classList.remove('active');
@@ -1175,17 +2333,64 @@
             fetch(`/api/file?path=${encodeURIComponent(filePath)}`)
                 .then(res => res.json())
                 .then(data => {
+                    if (data.error) {
+                        showToast(`Failed to open file: ${data.error}`, 'error');
+                        document.getElementById('welcome-screen').style.display = 'flex';
+                        document.getElementById('editor-wrapper').style.display = 'none';
+                        return;
+                    }
                     selectedFileContent = data.content;
                     if (editor) {
                         editor.setValue(data.content);
                     }
-                    // Run roofline on selection
+                    
+                    document.getElementById('welcome-screen').style.display = 'none';
+                    document.getElementById('editor-wrapper').style.display = 'flex';
+                    if (editor) editor.layout();
+
                     fetchRooflineData(filePath);
+
+                    
+                    if (diffEditor) {
+                        let partnerPath = null;
+                        let isOriginal = true;
+                        if (filePath.startsWith('examples/')) {
+                            partnerPath = 'optimized/optimized_' + filePath.substring(9);
+                            isOriginal = true;
+                        } else if (filePath.startsWith('optimized/optimized_')) {
+                            partnerPath = 'examples/' + filePath.substring(20);
+                            isOriginal = false;
+                        }
+
+                        if (partnerPath) {
+                            fetch(`/api/file?path=${encodeURIComponent(partnerPath)}`)
+                                .then(res => res.json())
+                                .then(partnerData => {
+                                    if (partnerData.error) {
+                                        setDiffEditorModels(data.content, data.content);
+                                    } else {
+                                        const origCode = isOriginal ? data.content : partnerData.content;
+                                        const modCode = isOriginal ? partnerData.content : data.content;
+                                        setDiffEditorModels(origCode, modCode);
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error("Error loading diff partner:", err);
+                                });
+                        } else {
+                            setDiffEditorModels(data.content, data.content);
+                        }
+                    }
                 })
-                .catch(err => console.error("Error fetching file:", err));
+                .catch(err => {
+                    console.error("Error fetching file:", err);
+                    showToast(`Error loading file: ${err}`, 'error');
+                    document.getElementById('welcome-screen').style.display = 'flex';
+                    document.getElementById('editor-wrapper').style.display = 'none';
+                });
         }
 
-        // Save current active file
+
         function saveActiveFile() {
             if (!selectedFile || !editor) return;
             const content = editor.getValue();
@@ -1199,26 +2404,31 @@
             .then(data => {
                 if (data.success) {
                     selectedFileContent = content;
-                    alert("File saved successfully!");
+                    showToast("File saved successfully!", "success");
                     fetchRooflineData(selectedFile);
                 } else {
-                    alert("Error saving file: " + data.error);
+                    showToast("Failed to save file: " + data.error, "error");
                 }
             })
-            .catch(err => alert("Failed to save file: " + err));
+            .catch(err => showToast("Error saving file: " + err, "error"));
         }
 
-        // Create new file
         function createNewFile() {
             const filenameInput = document.getElementById('new-filename');
-            let filename = filenameInput.value.strip();
+            let filename = filenameInput.value.trim();
             if (!filename) return;
 
             if (!filename.endsWith('.cu') && !filename.endsWith('.cuh')) {
                 filename += '.cu';
             }
 
-            const initialCode = `#include <cuda_runtime.h>\n#include <stdio.h>\n\n__global__ void my_kernel() {\n    // Write CUDA code here\n}\n`;
+            const initialCode = `#include <cuda_runtime.h>
+#include <stdio.h>
+
+__global__ void my_kernel() {
+    // Write CUDA code here
+}
+`;
 
             fetch('/api/file', {
                 method: 'POST',
@@ -1229,37 +2439,39 @@
             .then(data => {
                 if (data.success) {
                     filenameInput.value = '';
+                    const savedPath = data.path || filename;
+                    showToast(`File ${savedPath} created successfully!`, "success");
                     fetchFilesList();
-                    setTimeout(() => selectFile(filename), 300);
+                    setTimeout(() => selectFile(savedPath), 300);
                 } else {
-                    alert("Error creating file: " + data.error);
+                    showToast("Failed to create file: " + data.error, "error");
                 }
             })
-            .catch(err => alert("Failed to create file: " + err));
+            .catch(err => showToast("Error creating file: " + err, "error"));
         }
 
-        // Fetch System and GPU Status
+
         function fetchSystemStatus() {
             fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
-                    // Update CPU
+                  
                     document.getElementById('cpu-val').innerText = `${data.cpu_usage.toFixed(1)}%`;
                     document.getElementById('cpu-bar').style.width = `${data.cpu_usage}%`;
 
-                    // Update RAM
+         
                     const ramPct = (data.ram_used / data.ram_total) * 100;
                     document.getElementById('ram-val').innerText = `${data.ram_used.toFixed(1)}/${data.ram_total.toFixed(0)} GB`;
                     document.getElementById('ram-bar').style.width = `${ramPct}%`;
 
-                    // Update GPU
+                  
                     document.getElementById('gpu-val').innerText = `${data.gpu_usage.toFixed(0)}%`;
                     document.getElementById('gpu-bar').style.width = `${data.gpu_usage}%`;
 
-                    // Update GPU Model Name
+                
                     document.getElementById('gpu-name').innerText = `${data.gpu_model} (${data.cuda_version})`;
 
-                    // Update LLM Server Badge
+          
                     const serverDot = document.getElementById('server-status-dot');
                     const serverText = document.getElementById('server-status-text');
                     
@@ -1278,10 +2490,324 @@
                 });
         }
 
-        // Start Optimization Loop
+        function fetchOptimizationPresets() {
+            fetch('/api/optimizer/presets')
+                .then(res => res.json())
+                .then(data => {
+                    presetCatalog = data.presets || [];
+                    const presetSelect = document.getElementById('opt-preset');
+                    if (!presetSelect) return;
+
+                    const currentValue = presetSelect.value || 'balanced';
+                    presetSelect.innerHTML = '';
+                    presetCatalog.forEach(preset => {
+                        const option = document.createElement('option');
+                        option.value = preset.name;
+                        option.textContent = `${preset.label} - ${preset.description}`;
+                        presetSelect.appendChild(option);
+                    });
+
+                    if (presetCatalog.some(preset => preset.name === currentValue)) {
+                        presetSelect.value = currentValue;
+                    } else if (presetCatalog.length > 0) {
+                        presetSelect.value = presetCatalog[0].name;
+                    }
+
+                    applyPresetConfig(presetSelect.value || 'balanced', true);
+                })
+                .catch(err => console.error('Error fetching optimization presets:', err));
+        }
+
+        function applyPresetConfig(presetName, silent = false) {
+            const preset = presetCatalog.find(item => item.name === presetName) || presetCatalog.find(item => item.name === 'balanced');
+            if (!preset) return;
+
+            const targetSelect = document.getElementById('opt-target');
+            const profileModeSelect = document.getElementById('opt-profile-mode');
+            const fastMathToggle = document.getElementById('opt-fast-math');
+
+            if (preset.target && targetSelect) {
+                targetSelect.value = preset.target;
+            }
+            if (preset.default_profile_mode && profileModeSelect) {
+                profileModeSelect.value = preset.default_profile_mode;
+            }
+            if (fastMathToggle) {
+                fastMathToggle.checked = !!preset.default_fast_math;
+            }
+
+            if (!silent) {
+                showToast(`Preset applied: ${preset.label || preset.name}`, 'info');
+            }
+
+            const presetPanel = document.getElementById('inspector-meta');
+            if (presetPanel && !selectedBenchmarkRun) {
+                const alertText = preset.prompt_hint || preset.description || preset.label || 'Balanced';
+                presetPanel.innerHTML = `<span class="chip">${escapeHtml(alertText)}</span>`;
+            }
+        }
+
+        function fetchBenchmarkHistory() {
+            fetch('/api/benchmark/history')
+                .then(res => res.json())
+                .then(data => {
+                    benchmarkRuns = data.items || [];
+                    renderBenchmarkHistory();
+                    populateInspectorRunSelect();
+                    if (selectedBenchmarkRun) {
+                        const refreshed = benchmarkRuns.find(item => item.run_id === selectedBenchmarkRun.run_id);
+                        if (refreshed) {
+                            selectedBenchmarkRun = refreshed;
+                            renderInspectorForRun(selectedBenchmarkRun, selectedBenchmarkIteration);
+                        }
+                    }
+                })
+                .catch(err => console.error('Error fetching benchmark history:', err));
+        }
+
+        function getLatencyLabel(value) {
+            if (value === null || value === undefined || value === 99999 || value === 99999.0 || value === Infinity || !Number.isFinite(Number(value))) {
+                return 'Profiling Failed';
+            }
+            return `${Number(value).toFixed(4)} ms`;
+        }
+
+        function renderBenchmarkHistory() {
+            const body = document.getElementById('benchmark-history-body');
+            const alertStack = document.getElementById('benchmark-alert-stack');
+            const alertPill = document.getElementById('benchmark-alert-pill');
+            if (!body || !alertStack || !alertPill) return;
+
+            const allAlerts = benchmarkRuns.flatMap(item => (item.alerts || []).map(alert => ({ run: item, alert }))); 
+            alertStack.innerHTML = '';
+            if (allAlerts.length === 0) {
+                alertStack.innerHTML = '<span class="panel-subtitle">No regression alerts yet.</span>';
+            } else {
+                allAlerts.slice(0, 6).forEach(({ run, alert }) => {
+                    const pill = document.createElement('span');
+                    pill.className = 'alert-pill bad';
+                    pill.textContent = `${run.run_id}: ${alert}`;
+                    alertStack.appendChild(pill);
+                });
+            }
+
+            alertPill.textContent = `${allAlerts.length} alerts`;
+            alertPill.className = allAlerts.length ? 'alert-pill bad' : 'alert-pill good';
+
+            if (benchmarkRuns.length === 0) {
+                body.innerHTML = '<tr><td colspan="7" style="color: var(--text-muted);">No benchmark history yet.</td></tr>';
+                return;
+            }
+
+            body.innerHTML = '';
+            benchmarkRuns.slice().reverse().forEach(run => {
+                const row = document.createElement('tr');
+                const alerts = run.alerts || [];
+                const statusClass = run.status === 'completed' ? 'good' : (run.status === 'failed' ? 'bad' : 'warn');
+                const bestLatency = getLatencyLabel(run.best_time);
+                const speedup = run.speedup ? `${Number(run.speedup).toFixed(2)}x` : '-';
+                row.innerHTML = `
+                    <td>${escapeHtml(run.run_id || '-')}</td>
+                    <td>${escapeHtml(run.preset || 'balanced')}</td>
+                    <td>${escapeHtml(bestLatency)}</td>
+                    <td>${escapeHtml(speedup)}</td>
+                    <td><span class="status-pill ${statusClass}">${escapeHtml((run.status || 'unknown').toUpperCase())}</span></td>
+                    <td>${alerts.length ? `<span class="alert-pill bad">${alerts.length}</span>` : '<span class="alert-pill good">0</span>'}</td>
+                    <td><button class="inspector-btn" data-run-id="${escapeHtml(run.run_id || '')}">Inspect</button></td>
+                `;
+                row.querySelector('button').addEventListener('click', () => selectInspectorRun(run.run_id));
+                body.appendChild(row);
+            });
+        }
+
+        function populateInspectorRunSelect() {
+            const runSelect = document.getElementById('failure-run-select');
+            if (!runSelect) return;
+
+            const currentValue = runSelect.value;
+            runSelect.innerHTML = '<option value="">Select a run</option>';
+            benchmarkRuns.slice().reverse().forEach(run => {
+                const option = document.createElement('option');
+                option.value = run.run_id;
+                option.textContent = `${run.run_id} - ${run.preset || 'balanced'} - ${run.status || 'unknown'}`;
+                runSelect.appendChild(option);
+            });
+            if (currentValue && benchmarkRuns.some(run => run.run_id === currentValue)) {
+                runSelect.value = currentValue;
+            }
+        }
+
+        function selectInspectorRun(runId) {
+            selectedBenchmarkRun = benchmarkRuns.find(run => run.run_id === runId) || null;
+            selectedBenchmarkIteration = null;
+            const runSelect = document.getElementById('failure-run-select');
+            if (runSelect) runSelect.value = runId || '';
+            if (!selectedBenchmarkRun) {
+                renderEmptyInspector();
+                return;
+            }
+            populateInspectorIterationSelect(selectedBenchmarkRun);
+        }
+
+        function populateInspectorIterationSelect(run) {
+            const iterationSelect = document.getElementById('failure-iteration-select');
+            if (!iterationSelect) return;
+
+            iterationSelect.innerHTML = '<option value="">Select an iteration</option>';
+            const items = run.history || [];
+            items.forEach(item => {
+                const option = document.createElement('option');
+                option.value = item.iteration;
+                const state = item.compile_success ? (item.profiling_failed ? 'profiling failed' : 'ok') : (item.status || 'failed');
+                option.textContent = `Iter ${item.iteration} - ${state}`;
+                iterationSelect.appendChild(option);
+            });
+
+            const preferred = items.find(item => item.compile_success === false || item.profiling_failed) || items[items.length - 1];
+            if (preferred) {
+                iterationSelect.value = String(preferred.iteration);
+                selectedBenchmarkIteration = preferred.iteration;
+                renderInspectorForRun(run, preferred.iteration);
+            } else {
+                renderEmptyInspector();
+            }
+        }
+
+        function selectInspectorIteration(iterationValue) {
+            if (!selectedBenchmarkRun) return;
+            selectedBenchmarkIteration = iterationValue ? Number(iterationValue) : null;
+            renderInspectorForRun(selectedBenchmarkRun, selectedBenchmarkIteration);
+        }
+
+        function renderEmptyInspector() {
+            const meta = document.getElementById('inspector-meta');
+            const output = document.getElementById('inspector-output');
+            const codeSnapshot = document.getElementById('inspector-code-snapshot');
+            const statusPill = document.getElementById('inspector-status-pill');
+            if (meta) meta.innerHTML = '';
+            if (output) output.textContent = 'Select a benchmark run and iteration to inspect the failure details.';
+            if (codeSnapshot) codeSnapshot.value = '';
+            if (statusPill) {
+                statusPill.textContent = 'Idle';
+                statusPill.className = 'status-pill good';
+            }
+        }
+
+        function renderInspectorForRun(run, iterationValue) {
+            if (!run) {
+                renderEmptyInspector();
+                return;
+            }
+
+            const historyItem = (run.history || []).find(item => item.iteration === Number(iterationValue)) || (run.history || [])[0];
+            if (!historyItem) {
+                renderEmptyInspector();
+                return;
+            }
+
+            const meta = document.getElementById('inspector-meta');
+            const output = document.getElementById('inspector-output');
+            const codeSnapshot = document.getElementById('inspector-code-snapshot');
+            const statusPill = document.getElementById('inspector-status-pill');
+
+            const stateLabel = historyItem.compile_success ? (historyItem.profiling_failed ? 'Profiling Failed' : 'Verified') : (historyItem.status || 'Failed').replace(/_/g, ' ');
+            if (statusPill) {
+                statusPill.textContent = stateLabel;
+                statusPill.className = historyItem.compile_success && !historyItem.profiling_failed ? 'status-pill good' : 'status-pill bad';
+            }
+
+            if (meta) {
+                const chips = [];
+                chips.push(`<span class="chip">Run ${escapeHtml(run.run_id || '-')}</span>`);
+                chips.push(`<span class="chip">Preset: ${escapeHtml(run.preset || 'balanced')}</span>`);
+                chips.push(`<span class="chip">Iteration ${escapeHtml(historyItem.iteration)}</span>`);
+                chips.push(`<span class="chip">Latency: ${escapeHtml(getLatencyLabel(historyItem.latency))}</span>`);
+                chips.push(`<span class="chip">Compile: ${historyItem.compile_success ? 'Success' : 'Failed'}</span>`);
+                meta.innerHTML = chips.join('');
+            }
+
+            if (output) {
+                const lines = [];
+                if (historyItem.error_log) {
+                    lines.push(`ERROR LOG
+${historyItem.error_log}`);
+                }
+                if (historyItem.raw_output) {
+                    lines.push(`RAW PROFILER OUTPUT
+${historyItem.raw_output}`);
+                }
+                if (historyItem.profiling_failed) {
+                    lines.push('This iteration was marked as profiling failed. Use Replay Iteration to rerun the stored code snapshot.');
+                }
+                output.textContent = lines.length ? lines.join('\n\n') : 'No failure output stored for this iteration.';
+
+            if (codeSnapshot) {
+                codeSnapshot.value = historyItem.code_snapshot || '';
+            }
+            }
+        }
+
+        function loadInspectorDiff() {
+            if (!selectedBenchmarkRun || !selectedBenchmarkIteration) {
+                showToast('Select a run and iteration first.', 'warning');
+                return;
+            }
+
+            const item = (selectedBenchmarkRun.history || []).find(entry => entry.iteration === selectedBenchmarkIteration);
+            if (!item || !item.code_snapshot) {
+                showToast('No code snapshot available for this iteration.', 'warning');
+                return;
+            }
+
+            const originalCode = item.parent_code_snapshot || selectedBenchmarkRun.original_code || selectedBenchmarkRun.current_code || item.code_snapshot;
+            if (diffEditor) {
+                setDiffEditorModels(originalCode, item.code_snapshot);
+                document.querySelector('.tab-btn[data-tab="tab-diff"]').click();
+            }
+        }
+
+        function replaySelectedIteration() {
+            if (!selectedBenchmarkRun || !selectedBenchmarkIteration) {
+                showToast('Select a run and iteration first.', 'warning');
+                return;
+            }
+
+            fetch('/api/benchmark/replay', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: jsonStringify({
+                    run_id: selectedBenchmarkRun.run_id,
+                    iteration: selectedBenchmarkIteration
+                })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        showToast(`Replay failed: ${data.error}`, 'error');
+                        return;
+                    }
+
+                    showToast(`Replay finished for iteration ${data.iteration}.`, data.compile_success ? 'success' : 'warning');
+                    const replayItem = {
+                        iteration: data.iteration,
+                        compile_success: data.compile_success,
+                        profiling_failed: data.profiling_failed,
+                        raw_output: data.raw_output || '',
+                        error_log: data.error_log || '',
+                        latency: data.latency,
+                        code_snapshot: data.code_snapshot || '',
+                        parent_code_snapshot: (selectedBenchmarkRun.history || []).find(item => item.iteration === data.iteration)?.parent_code_snapshot || '',
+                        status: data.compile_success ? 'replay_success' : 'replay_failed'
+                    };
+                    renderInspectorForRun({ ...selectedBenchmarkRun, history: [replayItem] }, data.iteration);
+                })
+                .catch(err => showToast(`Replay error: ${err}`, 'error'));
+        }
+
+
         function startOptimization() {
             if (!selectedFile) {
-                alert("Please select a file to optimize first!");
+                showToast("Please select a file to optimize first!", "warning");
                 return;
             }
 
@@ -1292,6 +2818,7 @@
             const profile_mode = document.getElementById('opt-profile-mode').value;
             const fast_math = document.getElementById('opt-fast-math').checked;
             const nvtx = document.getElementById('opt-nvtx').checked;
+            const preset = document.getElementById('opt-preset').value;
 
             const consoleTerminal = document.getElementById('console-terminal');
             consoleTerminal.innerHTML = `<div class="log-entry"><span class="log-time">[System]</span> <span class="log-msg">Submitting optimization request...</span></div>`;
@@ -1306,6 +2833,7 @@
                     retries: retries,
                     opt_level: opt_level,
                     profile_mode: profile_mode,
+                    preset: preset,
                     fast_math: fast_math,
                     nvtx: nvtx
                 })
@@ -1314,34 +2842,38 @@
             .then(data => {
                 if (data.success) {
                     isOptimizing = true;
+                    lastDiffRenderIteration = -1;
+                    lastDiffRenderStatus = '';
+                    lastDiffRenderAtMs = 0;
+                    lastConsoleLogSignature = '';
                     document.getElementById('start-opt-btn').style.display = 'none';
                     document.getElementById('stop-opt-btn').style.display = 'flex';
                     
-                    // Switch tab to optimizer console automatically
                     document.querySelector('.tab-btn[data-tab="tab-optimizer"]').click();
                     
                     startPollingOptimizeStatus();
                 } else {
-                    alert("Error launching optimization: " + data.error);
+                    showToast("Failed to start optimization: " + data.error, "error");
                 }
             })
-            .catch(err => alert("Failed to connect to backend: " + err));
+            .catch(err => showToast("Error connecting to server: " + err, "error"));
         }
 
-        // Stop Active Run
+
         function stopOptimization() {
             fetch('/api/optimize/stop', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
-                        alert("Stop request submitted!");
+                        showToast("Stop optimization request sent!", "info");
                     } else {
-                        alert("Failed to stop: " + data.error);
+                        showToast("Failed to stop optimization: " + data.error, "error");
                     }
-                });
+                })
+                .catch(err => showToast("Error stopping optimization: " + err, "error"));
         }
 
-        // Polling Optimization Status
+
         function startPollingOptimizeStatus() {
             if (pollTimer) clearInterval(pollTimer);
             pollTimer = setInterval(pollOptimizeStatus, 800);
@@ -1351,80 +2883,96 @@
             fetch('/api/optimize/status')
                 .then(res => res.json())
                 .then(data => {
-                    // Update Status text
+                    currentOptimizeState = data;
+                
                     const statusVal = document.getElementById('opt-status-val');
-                    statusVal.innerText = data.status.toUpperCase();
+                    if (statusVal) {
+                        statusVal.innerText = data.status.toUpperCase();
+                    }
                     if (data.status === 'running') {
-                        statusVal.style.color = 'var(--amber)';
+                        if (statusVal) {
+                            statusVal.style.color = 'var(--amber)';
+                        }
                     } else if (data.status === 'completed') {
-                        statusVal.style.color = 'var(--emerald)';
+                        if (statusVal) {
+                            statusVal.style.color = 'var(--emerald)';
+                        }
                         isOptimizing = false;
                         document.getElementById('start-opt-btn').style.display = 'flex';
                         document.getElementById('stop-opt-btn').style.display = 'none';
                         clearInterval(pollTimer);
-                        // Refresh file view in case it saved
+                    
                         selectFile(selectedFile);
                         fetchFilesList();
+                        fetchBenchmarkHistory();
                     } else if (data.status === 'failed') {
-                        statusVal.style.color = 'var(--rose)';
+                        if (statusVal) {
+                            statusVal.style.color = 'var(--rose)';
+                        }
                         isOptimizing = false;
                         document.getElementById('start-opt-btn').style.display = 'flex';
                         document.getElementById('stop-opt-btn').style.display = 'none';
                         clearInterval(pollTimer);
+                        fetchBenchmarkHistory();
                     }
 
-                    // Update Metrics
-                    document.getElementById('baseline-latency-val').innerText = data.original_latency ? `${data.original_latency.toFixed(4)} ms` : '-';
-                    document.getElementById('best-latency-val').innerText = (data.best_time && data.best_time !== Infinity) ? `${data.best_time.toFixed(4)} ms` : '-';
+                  
+                    const profilingFailed = (value) => value === 99999 || value === 99999.0;
+                    const formatLatency = (value) => {
+                        if (value === null || value === undefined || profilingFailed(value)) {
+                            return 'Profiling Failed';
+                        }
+                        return `${Number(value).toFixed(4)} ms`;
+                    };
+
+                    const baselineLatencyVal = document.getElementById('baseline-latency-val');
+                    if (baselineLatencyVal) {
+                        baselineLatencyVal.innerText = formatLatency(data.original_latency);
+                    }
+                    const bestLatencyVal = document.getElementById('best-latency-val');
+                    if (bestLatencyVal) {
+                        bestLatencyVal.innerText = (data.best_time && data.best_time !== Infinity) ? formatLatency(data.best_time) : '-';
+                    }
                     
-                    if (data.original_latency && data.best_time && data.best_time !== Infinity) {
+                    if (data.original_latency && data.best_time && data.best_time !== Infinity && !profilingFailed(data.original_latency) && !profilingFailed(data.best_time)) {
                         const speedup = data.original_latency / data.best_time;
-                        document.getElementById('speedup-val').innerText = `${speedup.toFixed(2)}x`;
+                        const speedupVal = document.getElementById('speedup-val');
+                        if (speedupVal) {
+                            speedupVal.innerText = `${speedup.toFixed(2)}x`;
+                        }
                     } else {
-                        document.getElementById('speedup-val').innerText = '-';
+                        const speedupVal = document.getElementById('speedup-val');
+                        if (speedupVal) {
+                            speedupVal.innerText = '-';
+                        }
                     }
 
-                    // Update Progress
-                    document.getElementById('progress-text').innerText = `Iteration ${data.current_iteration}/${data.total_iterations} (${data.stage})`;
+                  
+                    const progressText = document.getElementById('progress-text');
+                    if (progressText) {
+                        progressText.innerText = `Iteration ${data.current_iteration}/${data.total_iterations} (${data.stage})`;
+                    }
                     const pct = data.total_iterations > 0 ? (data.current_iteration / data.total_iterations) * 100 : 0;
-                    document.getElementById('progress-bar-fill').style.width = `${pct}%`;
-
-                    // Update Logs
-                    const consoleTerminal = document.getElementById('console-terminal');
-                    consoleTerminal.innerHTML = '';
-                    
-                    data.logs.forEach(log => {
-                        const timeStr = new Date(log.timestamp * 1000).toLocaleTimeString();
-                        const div = document.createElement('div');
-                        div.className = 'log-entry';
-
-                        let classStyle = 'log-msg';
-                        if (log.message.includes('changed to:')) classStyle = 'log-stage';
-                        if (log.message.includes('FAILED') || log.message.includes('Error') || log.message.includes('mismatch')) classStyle = 'log-error';
-                        if (log.message.includes('achieved') || log.message.includes('success')) classStyle = 'log-success';
-
-                        div.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="${classStyle}">${escapeHtml(log.message)}</span>`;
-                        consoleTerminal.appendChild(div);
-                    });
-                    
-                    // Auto scroll to bottom
-                    consoleTerminal.scrollTop = consoleTerminal.scrollHeight;
-
-                    // Update Diff editor models
-                    if (diffEditor && data.original_code && data.best_code) {
-                        const originalModel = monaco.editor.createModel(data.original_code, 'cpp');
-                        const modifiedModel = monaco.editor.createModel(data.best_code, 'cpp');
-                        diffEditor.setModel({
-                            original: originalModel,
-                            modified: modifiedModel
-                        });
+                    const progressBarFill = document.getElementById('progress-bar-fill');
+                    if (progressBarFill) {
+                        progressBarFill.style.width = `${pct}%`;
                     }
 
-                    // Handle compiler errors popup if any
+                  
+                    renderOptimizeLogs(data.logs);
+
+                  
+                    maybeRefreshDiffFromStatus(data);
+
+                    // Update live benchmark chart with iteration data
+                    if (data.history && data.history.length > 0) {
+                        updateLiveBenchmarkChart(data.history);
+                    }
+
+                 
                     if (data.compiler_errors && data.compiler_errors.length > 0) {
                         const lastErr = data.compiler_errors[data.compiler_errors.length - 1];
-                        // If it has not been displayed yet in modal, we can show it or just print it.
-                        // We will allow users to review compiling issues in logs.
+                        console.error("Compiler error:", lastErr);
                     }
                 })
                 .catch(err => {
@@ -1433,38 +2981,192 @@
                 });
         }
 
-        // Fetch Roofline data
-        function fetchRooflineData(filePath) {
+
+        
+        function updateLiveBenchmarkChart(history) {
+            const ctx = document.getElementById('live-benchmark-chart').getContext('2d');
+            const labels = history.map(h => `Iter ${h.iteration}`);
+            const latencyData = history.map(h => h.latency);
+            const speedupData = history.map(h => h.speedup || 0);
+            
+            if (liveBenchmarkChart) {
+                liveBenchmarkChart.destroy();
+            }
+            
+            liveBenchmarkChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Latency (ms)',
+                            data: latencyData,
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.1,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Speedup (x)',
+                            data: speedupData,
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.1,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'Latency (ms)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: 'Speedup (x)' },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        }
+
+function fetchRooflineData(filePath) {
             fetch(`/api/roofline?path=${encodeURIComponent(filePath)}`)
                 .then(res => res.json())
                 .then(data => {
+                    if (!data || !data.static) {
+                        console.error("Invalid roofline data received");
+                        return;
+                    }
                     const staticData = data.static;
+                    const dynamicData = data.dynamic;
+                    const blendedData = data.blended;
                     
-                    document.getElementById('roofline-ai-val').innerText = `${staticData.arithmetic_intensity.toFixed(4)} FLOPs/Byte`;
-                    document.getElementById('roofline-bottleneck-val').innerText = staticData.bottleneck;
-                    document.getElementById('roofline-reason-val').innerText = staticData.reason;
+                    const rooflineAiVal = document.getElementById('roofline-ai-val');
+                    if (rooflineAiVal && staticData.arithmetic_intensity !== undefined) {
+                        rooflineAiVal.innerText = `${staticData.arithmetic_intensity.toFixed(4)} FLOPs/Byte`;
+                    }
+                    const rooflineBottleneckVal = document.getElementById('roofline-bottleneck-val');
+                    if (rooflineBottleneckVal && staticData.bottleneck) {
+                        rooflineBottleneckVal.innerText = staticData.bottleneck;
+                    }
+
+                    const op = staticData.op_breakdown || {};
+                    const mem = staticData.memory_breakdown || {};
+
+                    // Display FP/INT separation data
+                    const fpOps = op.fp_ops_estimated || 0;
+                    const intOps = op.int_index_ops_estimated || 0;
+                    const fpIntRatio = staticData.fp_int_ratio || 0;
+                    const totalOps = staticData.estimated_total_ops || 0;
+                    
+                    let fpIntText = `Static Analysis (per-thread source-level):
+`;
+                    fpIntText += `  FP Ops: ${fpOps.toFixed(0)}
+`;
+                    fpIntText += `  INT/Index Ops: ${intOps.toFixed(0)}
+`;
+                    fpIntText += `  FP/INT Ratio: ${fpIntRatio.toFixed(2)}
+`;
+                    
+                    if (dynamicData && dynamicData.measured_flops !== undefined) {
+                        const dFlops = dynamicData.measured_flops || 0;
+                        const dIntOps = dynamicData.measured_int_ops || 0;
+                        const dRatio = dynamicData.fp_int_ratio || 0;
+                        fpIntText += `
+NCU Measured:
+`;
+                        fpIntText += `  FP Ops: ${dFlops.toFixed(0)}
+`;
+                        fpIntText += `  INT Ops: ${dIntOps.toFixed(0)}
+`;
+                        fpIntText += `  FP/INT Ratio: ${dRatio.toFixed(2)}
+`;
+                    }
+                    
+                    if (blendedData && blendedData.blended_flops !== undefined) {
+                        const bFlops = blendedData.blended_flops || 0;
+                        const bIntOps = blendedData.blended_int_ops || 0;
+                        const bRatio = blendedData.blended_fp_int_ratio || 0;
+                        fpIntText += `
+Blended (w=${blendedData.blend_weight_dynamic?.toFixed(2) || 'N/A'}):
+`;
+                        fpIntText += `  FP Ops: ${bFlops.toFixed(0)}
+`;
+                        fpIntText += `  INT Ops: ${bIntOps.toFixed(0)}
+`;
+                        fpIntText += `  FP/INT Ratio: ${bRatio.toFixed(2)}
+`;
+                    }
+                    
+                    const rooflineFpIntVal = document.getElementById('roofline-fp-int-val');
+                    if (rooflineFpIntVal) {
+                        rooflineFpIntVal.innerText = fpIntText;
+                    }
+                    const confidence = staticData.analysis_confidence || 'medium';
+                    const totalLoads = Number(mem.loads_bytes || 0).toFixed(0);
+                    const totalStores = Number(mem.stores_bytes || 0).toFixed(0);
+                    const totalBytes = Number(mem.total_bytes || staticData.estimated_bytes || 0).toFixed(0);
+                    const reasonLines = [
+                        `${staticData.reason}`,
+                        `Formula: ${staticData.formula || 'Arithmetic Intensity = FLOPs / Bytes'}`,
+                        `Ops Breakdown -> +:${op.add || 0}, -:${op.sub || 0}, *:${op.mul || 0}, /:${op.div || 0}, FMA:${op.fma || 0}, special:${op.special_math || 0}`,
+                        `Memory Estimate -> loads:${totalLoads} B, stores:${totalStores} B, total:${totalBytes} B`,
+                        `Confidence: ${confidence.toUpperCase()}`
+                    ];
+                    const rooflineReasonVal = document.getElementById('roofline-reason-val');
+                    if (rooflineReasonVal) {
+                        rooflineReasonVal.innerText = reasonLines.join('\n');
+                    }
+
 
                     const bottleneckCard = document.getElementById('roofline-bottleneck-card');
                     const tipsVal = document.getElementById('roofline-tips-val');
+                    const computeShare = ((staticData.model_shares?.compute_bound_share || 0) * 100).toFixed(1);
+                    const memoryShare = ((staticData.model_shares?.memory_bound_share || 0) * 100).toFixed(1);
 
                     if (staticData.bottleneck === 'Memory-Bound') {
-                        bottleneckCard.className = 'info-card bound-memory';
-                        tipsVal.innerHTML = `
+                        if (bottleneckCard) {
+                            bottleneckCard.className = 'info-card bound-memory';
+                        }
+                        if (tipsVal) {
+                            tipsVal.innerHTML = `
+                            Model confidence: <strong>${confidence.toUpperCase()}</strong><br>
+                            Dominance estimate: Memory ${memoryShare}% vs Compute ${computeShare}%<br><br>
                             Focus on reducing VRAM bandwidth bottleneck:<br>
                             - Use <strong>shared memory tiling</strong> to cache inputs.<br>
                             - Ensure <strong>coalesced global memory accesses</strong> (align thread IDs with contiguous memory indexes).<br>
                             - Avoid shared memory <strong>bank conflicts</strong> (stride allocations appropriately).<br>
                             - Reuse read-only memory by caching via <code>__const__</code> or <code>__ldg()</code>.
                         `;
+                        }
                     } else {
-                        bottleneckCard.className = 'info-card bound-compute';
-                        tipsVal.innerHTML = `
+                        if (bottleneckCard) {
+                            bottleneckCard.className = 'info-card bound-compute';
+                        }
+                        if (tipsVal) {
+                            tipsVal.innerHTML = `
+                            Model confidence: <strong>${confidence.toUpperCase()}</strong><br>
+                            Dominance estimate: Compute ${computeShare}% vs Memory ${memoryShare}%<br><br>
                             Focus on increasing compute/instruction throughput:<br>
                             - Compile with <code>--fast-math</code> flag (uses fast hardware intrinsics).<br>
                             - Apply <strong>loop unrolling</strong> using <code>#pragma unroll</code>.<br>
                             - Reduce <strong>register pressure</strong> (avoid storing huge temp arrays in threads).<br>
                             - Avoid <strong>warp divergence</strong> in loops/conditionals.
                         `;
+                        }
                     }
 
                     renderRooflineChart(staticData.arithmetic_intensity, staticData.bottleneck);
@@ -1472,22 +3174,18 @@
                 .catch(err => console.error("Error fetching roofline data", err));
         }
 
-        // Render Roofline Chart using Chart.js
+
         function renderRooflineChart(ai, bottleneck) {
             const ctx = document.getElementById('roofline-chart').getContext('2d');
             
             if (rooflineChart) {
                 rooflineChart.destroy();
             }
+            const peakCompute = 20000; 
+            const peakBandwidth = 1000; 
+            const inflectionPoint = peakCompute / peakBandwidth; 
 
-            // Create hypothetical roofline boundaries based on typical modern GPU performance
-            // e.g. Max Compute Peak = 10,000 GFLOPS, Max Bandwidth = 500 GB/s.
-            // Inflection Point (Knee) = Peak Compute / Peak Bandwidth = 20.0
-            const peakCompute = 20000; // GFLOPS
-            const peakBandwidth = 1000; // GB/s
-            const inflectionPoint = peakCompute / peakBandwidth; // 20.0
-
-            // Generate roofline line data
+        
             const lineData = [];
             const steps = [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200];
             
@@ -1496,7 +3194,7 @@
                 lineData.push({ x: x, y: y });
             });
 
-            // Active point coordinates
+
             const activeY = Math.min(peakCompute, peakBandwidth * ai);
 
             rooflineChart = new Chart(ctx, {
@@ -1568,7 +3266,7 @@
             });
         }
 
-        // Helper utilities
+      
         function escapeHtml(text) {
             if (!text) return "";
             return text.toString()

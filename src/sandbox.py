@@ -4,7 +4,7 @@ import re
 import shutil
 import time
 from datetime import datetime
-from .discover import find_ncu_path, find_nsys_path
+from .discover import find_ncu_path, find_nsys_path, find_cl_exe_dir
 
 class CUDASandbox:
     def __init__(self, file_path, flags=None, profile_mode='auto', use_nvtx=False, profile_metrics='', apply_nvtx_suggestion=False):
@@ -469,10 +469,19 @@ int main(int argc, char** argv) {{
         cmd += ["-o", self.exe_path] + self.flags
         if os.name == 'nt' and "-allow-unsupported-compiler" not in cmd:
             cmd.append("-allow-unsupported-compiler")
-            
-        print(f"\n[DEBUG NVCC CMD] {' '.join(cmd)}\n")
+
+        # On Windows, inject cl.exe directory into PATH so nvcc can find the host compiler
+        compile_env = None
+        if os.name == 'nt':
+            cl_dir = find_cl_exe_dir()
+            if cl_dir:
+                compile_env = os.environ.copy()
+                current_path = compile_env.get('PATH', '')
+                if cl_dir.lower() not in current_path.lower():
+                    compile_env['PATH'] = cl_dir + ';' + current_path
+
         try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=compile_env)
             error_log = ""
             if result.stderr:
                 error_log += result.stderr.strip()
@@ -554,6 +563,12 @@ int main(int argc, char** argv) {{
                 base = f"ncu_report_{self.run_id}_{ts}"
                 csv_file = f"{base}.csv"
                 cmd = [binpath]
+                from .discover import find_ncu_sections_path
+                sections_path = find_ncu_sections_path(binpath)
+                if sections_path:
+                    cmd.extend(['--section-folder', sections_path])
+                # Add kernel profiling section to ensure kernels are captured
+                cmd.extend(['--set', 'full', '--section', 'SpeedOfLight'])
                 if self.profile_metrics:
                     cmd.extend(['--metrics', self.profile_metrics])
                 cmd.extend(['--csv', '-o', base, self.exe_path])
@@ -562,13 +577,20 @@ int main(int argc, char** argv) {{
                     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     output = result.stdout + result.stderr
                 except Exception:
-                    cmd2 = [binpath, self.exe_path] + args
+                    cmd2 = [binpath]
+                    if sections_path:
+                        cmd2.extend(['--section-folder', sections_path])
+                    cmd2.extend(['--set', 'full', '--section', 'SpeedOfLight'])
+                    cmd2.extend([self.exe_path] + args)
                     result = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     output = result.stdout + result.stderr
 
                 rep_path = f"{base}.ncu-rep"
                 if os.path.exists(rep_path):
-                    export_cmd = [binpath, '--import', rep_path, '--csv']
+                    export_cmd = [binpath]
+                    if sections_path:
+                        export_cmd.extend(['--section-folder', sections_path])
+                    export_cmd.extend(['--import', rep_path, '--csv'])
                     try:
                         exp_res = subprocess.run(export_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
                         if exp_res.returncode == 0 and exp_res.stdout.strip():

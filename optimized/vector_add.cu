@@ -3,26 +3,28 @@
 #include <stdlib.h>
 
 __global__ void vectorAdd(const float *A, const float *B, float *C, int numElements) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < numElements) {
+    int index = blockDim.x * blockIdx.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = index; i < numElements; i += stride) {
         C[i] = A[i] + B[i];
     }
 }
 
 int main() {
-    int numElements = 50000;
+    const int numElements = 50000;
     size_t size = numElements * sizeof(float);
 
-    float* h_A = static_cast<float*>(malloc(size));
-    float* h_B = static_cast<float*>(malloc(size));
-    float* h_C = static_cast<float*>(malloc(size));
+    float *h_A = (float *)malloc(size);
+    float *h_B = (float *)malloc(size);
+    float *h_C = (float *)malloc(size);
 
     for (int i = 0; i < numElements; ++i) {
         h_A[i] = rand() / (float)RAND_MAX;
         h_B[i] = rand() / (float)RAND_MAX;
     }
 
-    float* d_A, *d_B, *d_C;
+    float *d_A, *d_B, *d_C;
 
     cudaMalloc(&d_A, size);
     cudaMalloc(&d_B, size);
@@ -32,9 +34,8 @@ int main() {
     cudaMemcpy(d_B, h_B, size, cudaMemcpyHostToDevice);
 
     int threadsPerBlock = 256;
-    int blocksPerGrid = (numElements + threadsPerBlock - 1) / threadsPerBlock;
-
-    vectorAdd<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, numElements);
+    const dim3 blocks((numElements + threadsPerBlock - 1) / threadsPerBlock);
+    vectorAdd<<<blocks.x, threadsPerBlock>>>(d_A, d_B, d_C, numElements);
 
     cudaMemcpy(h_C, d_C, size, cudaMemcpyDeviceToHost);
 
@@ -45,7 +46,7 @@ int main() {
         }
     }
 
-    printf("Test passed.\n");
+    printf("Test PASSED\n");
 
     cudaFree(d_A);
     cudaFree(d_B);

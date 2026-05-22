@@ -67,7 +67,7 @@ class LLMClient:
     def __init__(
         self,
         url,
-        max_stream_chunks=2000,
+        max_stream_chunks=8000,
         api_key=None,
         api_key_file=None,
         verify_tls=True,
@@ -91,9 +91,39 @@ class LLMClient:
         self.verify_tls = verify_tls
         self.endpoint_info = validate_llm_endpoint(self.url, allow_insecure_remote=allow_insecure_remote)
         self._validate_url()
+        self.model_name = None
+        self._detect_model_name()
         
     def _is_ollama(self):
         return "ollama" in self.url.lower() or "11434" in self.url
+
+    def _detect_model_name(self):
+        self.model_name = None
+        if self._is_ollama():
+            return
+        try:
+            models_url = self.url
+            if "/v1/completions" in models_url:
+                models_url = models_url.replace("/v1/completions", "/v1/models")
+            elif models_url.endswith("/v1") or models_url.endswith("/v1/"):
+                models_url = models_url.rstrip("/") + "/models"
+            else:
+                from urllib.parse import urlparse
+                parsed = urlparse(self.url)
+                models_url = f"{parsed.scheme}://{parsed.netloc}/v1/models"
+
+            r = requests.get(models_url, headers=self.request_headers, timeout=3, verify=self.verify_tls)
+            if r.status_code == 200:
+                data = r.json()
+                models = data.get("data", [])
+                if models:
+                    non_embed_models = [m.get("id") for m in models if "embed" not in m.get("id", "").lower()]
+                    if non_embed_models:
+                        self.model_name = non_embed_models[0]
+                    else:
+                        self.model_name = models[0].get("id")
+        except Exception:
+            pass
 
     def _validate_url(self):
         try:
@@ -220,7 +250,11 @@ class LLMClient:
             prompt += "```cuda\n"
             prefilled = True
 
+        if not self._is_ollama() and not self.model_name:
+            self._detect_model_name()
+
         payload = {
+            "model": self.model_name or "local-model",
             "prompt": prompt,
             "max_tokens": max_tokens,
             "temperature": 0.2,
@@ -352,11 +386,11 @@ class LLMClient:
                             display_think = lines[-1] if lines else "Analyzing performance..."
                             if len(display_think) > 80:
                                 display_think = display_think[:77] + "..."
-                            status_callback(f"AI Reasoning: [dim cyan]{display_think}[/dim cyan]")
+                            status_callback(f"AI Reasoning: {display_think}")
                         elif "</think>" in result_text:
                             status_callback(f"Writing CUDA Code... (Generated {tokens_generated} tokens)")
                         else:
-                            status_callback(f"AI Reasoning: [dim cyan]Analyzing kernel constraints... ({tokens_generated} tokens)[/dim cyan]")
+                            status_callback(f"AI Reasoning: Analyzing kernel constraints... ({tokens_generated} tokens)")
                     else:
                         if "<think>" in result_text and "</think>" not in result_text:
                             in_think = True
@@ -521,7 +555,7 @@ class LLMClient:
                 except Exception:
                     pass
 
-    def create_optimization_prompt(self, code, env_info, target, best_time, flags, ncu_csv=None, history=None):
+    def create_optimization_prompt(self, code, env_info, target, best_time, flags, ncu_csv=None, history=None, preset=None):
         kernels = self._extract_kernels(code)
         if kernels:
             kernel_list_str = ", ".join(kernels)
@@ -537,6 +571,15 @@ class LLMClient:
             system_prompt += f"Current best latency: {best_time}ms. Target: {target}.\n"
         if flags:
             system_prompt += f"Compiler flags used: {' '.join(flags)}.\n"
+
+        if preset:
+            preset_label = preset.get("label", preset.get("name", "balanced"))
+            system_prompt += (
+                f"\nOPTIMIZATION PRESET: {preset_label}\n"
+                f"Preset Guidance: {preset.get('prompt_hint', 'Use the most suitable CUDA optimization strategy for this kernel.')}\n"
+            )
+            if preset.get("extra_flags"):
+                system_prompt += f"Preset compiler flags: {' '.join(preset.get('extra_flags', []))}.\n"
 
       
         try:
@@ -589,7 +632,8 @@ class LLMClient:
             "3. Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block.\n"
             "4. Start the final answer by continuing the CUDA code block immediately. Never narrate before the code fence.\n"
             "5. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
-            f"6. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided in the input code. Do NOT alter parameter types, as they are strictly benchmarked by an external host wrapper."
+            f"6. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided in the input code. Do NOT alter parameter types, as they are strictly benchmarked by an external host wrapper.\n"
+            "7. CRITICAL: For C++ compatibility, you MUST explicitly cast the return value of malloc to the correct pointer type (e.g., use `(float *)malloc(...)` instead of `malloc(...)`). Do NOT leave void* pointer conversions implicit."
         )
         
         user_prompt = f"Optimize the following CUDA code:\n\n```cuda\n{code}\n```"
@@ -619,7 +663,8 @@ class LLMClient:
             "3. Do NOT write any introduction, explanation, apology, summary, or text outside the CUDA code block.\n"
             "4. Start the final answer by continuing the CUDA code block immediately. Never narrate before the code fence.\n"
             "5. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, you MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
-            f"6. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
+            f"6. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper.\n"
+            "7. CRITICAL: For C++ compatibility, you MUST explicitly cast the return value of malloc to the correct pointer type (e.g., use `(float *)malloc(...)` instead of `malloc(...)`). Do NOT leave void* pointer conversions implicit."
         )
         
         user_prompt = (
@@ -653,7 +698,8 @@ class LLMClient:
             "4. Prioritize the compiler diagnostics over the previous code. Fix the reported errors directly and preserve all unaffected logic.\n"
             f"5. This is repair attempt {attempt_index}/{max_attempts}. If a previous repair failed, assume the last emitted code was still invalid and re-check the exact compiler diagnostics before returning code.\n"
             "6. CRITICAL: DO NOT USE ANY PLACEHOLDERS OR ABBREVIATIONS like '...', 'rest of the code', 'TODO', 'code remains unchanged', etc. You MUST output every single function in its entirety, with every single variable declaration, loop, conditional check, and math statement written out completely. If a function is not modified, You MUST copy its code verbatim from the original input. Failure to output the complete code will break compilation.\n"
-            f"7. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper."
+            f"7. CRITICAL: You MUST preserve the exact function names, argument counts, parameter types, and overall function signatures of {kernel_instruction} exactly as provided. Do NOT alter parameter types, change argument lists, or change variable types of the parameters, as it will break the compilation with the benchmark wrapper.\n"
+            "8. CRITICAL: For C++ compatibility, you MUST explicitly cast the return value of malloc to the correct pointer type (e.g., use `(float *)malloc(...)` instead of `malloc(...)`). Do NOT leave void* pointer conversions implicit."
         )
 
         diagnostic_summary = self._summarize_diagnostics(error_log)
@@ -704,7 +750,11 @@ class LLMClient:
         )
         user_prompt = f"Profiling summary:\n\n{summary_text}\n\nPlease analyze and provide the sections requested."
 
+        if not self._is_ollama() and not self.model_name:
+            self._detect_model_name()
+
         payload = {
+            "model": self.model_name or "local-model",
             "prompt": system_prompt + "\n" + user_prompt,
             "max_tokens": max_tokens,
             "temperature": 0.0,
