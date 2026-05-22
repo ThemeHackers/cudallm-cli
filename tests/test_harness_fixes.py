@@ -329,6 +329,7 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertIn("Nsight Systems 2024.1", nsys_path)
         self.assertIn("nsys.exe", nsys_path.lower())
 
+    @patch("src.discover.os.name", "nt")
     @patch("src.discover.os.path.exists")
     @patch("src.discover.glob.glob")
     @patch("src.discover.shutil.which")
