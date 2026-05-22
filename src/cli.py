@@ -1406,5 +1406,15 @@ def serve(port, host, public_url, api_key, api_key_file, ssl_key_file, ssl_cert_
     )
     console.print(Panel(guide_text, title="[bold yellow]LM Studio Integration Guide[/bold yellow]", border_style="yellow"))
 
+@main.command()
+@click.option('--port', default=8000, help='Port to run the dashboard server on')
+def dashboard(port):
+    """
+    Start the CUDA LLM Optimizer Web Dashboard.
+    """
+    from .dashboard import start_dashboard_server
+    start_dashboard_server(port=port)
+
 if __name__ == '__main__':
     main()
+

@@ -36,10 +36,13 @@ class CLIDefaultsTest(unittest.TestCase):
         serve_options = {param.name for param in main.commands["serve"].params}
         audit_options = {param.name for param in main.commands["audit"].params}
         agent_options = {param.name for param in main.commands["agent"].params}
+        dashboard_options = {param.name for param in main.commands["dashboard"].params}
 
         self.assertIn("dry_run", optimize_options)
         self.assertIn("ncu_metrics", optimize_options)
         self.assertIn("dry_run", expert_options)
+        self.assertIn("port", dashboard_options)
+
         self.assertIn("rerun", expert_options)
         self.assertIn("host", serve_options)
         self.assertIn("public_url", serve_options)
