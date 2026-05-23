@@ -6,7 +6,7 @@ import socket
 import json
 import os
 
-from src.dashboard import start_dashboard_server, active_run
+from src.dashboard import start_dashboard_server, active_run, active_run_lock
 
 def find_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -61,6 +61,21 @@ class DashboardServerTest(unittest.TestCase):
         self.assertIn("gpu_model", data)
         self.assertIn("tools", data)
 
+    def test_api_status_includes_profile_mode_label(self):
+        with active_run_lock:
+            active_run["profile_mode"] = "auto-relaxed"
+
+        try:
+            url = f"http://localhost:{self.port}/api/status"
+            resp = requests.get(url, timeout=5)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data["current_profile_mode"], "auto-relaxed")
+            self.assertIn("auto-relaxed", data["current_profile_mode_label"])
+        finally:
+            with active_run_lock:
+                active_run["profile_mode"] = "auto"
+
     def test_api_files(self):
         url = f"http://localhost:{self.port}/api/files"
         resp = requests.get(url, timeout=5)
@@ -94,6 +109,37 @@ class DashboardServerTest(unittest.TestCase):
         data = resp.json()
         self.assertIn("items", data)
         self.assertIsInstance(data["items"], list)
+
+    def test_benchmark_summary_includes_profile_mode_label(self):
+        from src.dashboard import build_benchmark_summary
+
+        run_state = {
+            "run_id": "test-run",
+            "status": "completed",
+            "stage": "Done",
+            "input_file": "examples/vector_add.cu",
+            "target": "latency",
+            "preset": "balanced",
+            "profile_mode": "auto-strict",
+            "profile_metrics": "",
+            "flags": [],
+            "total_iterations": 1,
+            "best_time": 1.23,
+            "original_latency": 2.34,
+            "regression_guard": {"max_regression_pct": 5.0},
+            "history": [
+                {
+                    "iteration": 1,
+                    "latency": 1.23,
+                    "compile_success": True,
+                    "profiling_failed": False,
+                    "status": "success",
+                }
+            ],
+        }
+
+        summary = build_benchmark_summary(run_state)
+        self.assertEqual(summary["profile_mode_label"], "auto-strict (benchmark-only)")
 
     def test_api_optimizer_presets(self):
         url = f"http://localhost:{self.port}/api/optimizer/presets"

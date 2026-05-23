@@ -9,11 +9,12 @@ import glob
 import time
 import shutil
 import requests
+import math
 from datetime import datetime
 from .discover import check_environment, discover_tool_paths, find_ncu_path, find_nsys_path
 from .sandbox import CUDASandbox
 from .llm_client import LLMClient
-from .profiler_tools import run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
+from .profiler_tools import build_ncu_command, build_nsys_command, run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
 from .network_security import validate_llm_endpoint
 from .docker_sandbox import run_in_docker
 from .terminal_manager import TerminalManager
@@ -35,6 +36,7 @@ from rich.live import Live
 from rich.console import Group
 from rich.spinner import Spinner
 from rich.text import Text
+from rich import box
 
 console = Console()
 
@@ -49,6 +51,8 @@ DEFAULT_CONFIG = {
     "llm_allow_insecure_remote": False,
     "max_stream_chunks": 8000,
 }
+
+PROFILING_FAILURE_LATENCY = 99999.0
 
 CUDA_EXTENSIONS = {".cu", ".cuh"}
 IGNORE_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "node_modules"}
@@ -241,6 +245,97 @@ def save_report(report_data, filepath):
         json.dump(report_data, f, indent=2)
 
 
+def is_profiling_failure(latency):
+    return latency == PROFILING_FAILURE_LATENCY
+
+
+def extract_ncu_report_path(profiler_note):
+    match = re.search(r"Report:\s*\r?\n\s*(.+\.ncu-rep)", profiler_note or "")
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def effective_latency_for_selection(latency, prof_res, profile_mode):
+    if not is_profiling_failure(latency):
+        return latency
+
+    if profile_mode == "auto-relaxed":
+        fallback_latency = prof_res.get("fallback_latency") if isinstance(prof_res, dict) else None
+        if isinstance(fallback_latency, (int, float)) and math.isfinite(fallback_latency):
+            return fallback_latency
+
+    return None
+
+
+def profile_mode_label(profile_mode):
+    labels = {
+        "none": "none (timer only)",
+        "auto": "auto (strict profiler selection)",
+        "auto-strict": "auto-strict (benchmark-only)",
+        "auto-relaxed": "auto-relaxed (fallback ranking enabled)",
+        "ncu": "ncu (Nsight Compute)",
+        "nsys": "nsys (Nsight Systems)",
+        "code": "code (cudaProfilerApi)",
+    }
+    return labels.get(profile_mode, profile_mode)
+
+
+def build_report_filename(input_file, profile_mode):
+    base_name = os.path.basename(input_file)
+    stem, ext = os.path.splitext(base_name)
+    mode_suffix = profile_mode.replace(os.sep, "_").replace("/", "_")
+    safe_mode_suffix = re.sub(r"[^A-Za-z0-9._-]+", "-", mode_suffix).strip("-") or "none"
+    return f"report_{stem}_{safe_mode_suffix}{ext}.json"
+
+
+def build_profiler_failure_panel(latency, prof_res, gen_time, profile_mode):
+    profiler_note = prof_res.get("raw_output", "Profiler fallback used.")
+    fallback_latency = prof_res.get("fallback_latency")
+    report_path = extract_ncu_report_path(profiler_note)
+
+    status_grid = Table.grid(expand=True, padding=(0, 1))
+    status_grid.add_column(style="bold cyan", width=14)
+    status_grid.add_column(ratio=1)
+
+    has_fallback = profile_mode == "auto-relaxed" and isinstance(fallback_latency, (int, float)) and math.isfinite(fallback_latency)
+
+    lines = []
+    if has_fallback:
+        lines.append("[bold yellow]Fallback timing available[/bold yellow]")
+        lines.append(f"[cyan]Mode:[/cyan] {profile_mode_label(profile_mode)}")
+        lines.append(f"[green]Latency:[/green] {fallback_latency:.4f} ms")
+        lines.append("[dim]Use: informational only; not a benchmark[/dim]")
+    else:
+        lines.append("[bold red]No usable profiler result[/bold red]")
+        lines.append(f"[cyan]Mode:[/cyan] {profile_mode_label(profile_mode)}")
+        lines.append("[yellow]Latency:[/yellow] unavailable")
+        if prof_res.get("profiling_blocked_reason") == "ncu_permission":
+            reason_text = "GPU performance counters are blocked for this user."
+            next_step = "Open NVIDIA Control Panel as Administrator and allow GPU performance counters."
+        elif report_path:
+            reason_text = "NCU report was created, but no CSV export was produced."
+            next_step = "Re-run with a valid CSV export or try auto-relaxed for fallback timing."
+        else:
+            reason_text = "Profiler did not produce a valid timing result."
+            next_step = "Re-run profiling after checking the NCU setup."
+
+        lines.append(f"[white]Reason:[/white] {reason_text}")
+        lines.append(f"[bright_white]Next step:[/bright_white] {next_step}")
+
+    if report_path:
+        lines.append(f"[magenta]Report:[/magenta] {report_path}")
+
+    body = Text.from_markup("\n".join(lines))
+    return Panel(
+        body,
+        title="Profiler Status",
+        subtitle=f"Gen Time: {gen_time:.2f}s",
+        border_style="yellow" if has_fallback else "red",
+        box=box.ROUNDED,
+    )
+
+
 
 def get_resources_table():
     
@@ -336,8 +431,20 @@ def print_optimization_summary(output, best_time, original_latency, total_tokens
         performance = Table(show_header=False, box=None, padding=(0, 1))
         performance.add_column("Metric", style="bold cyan", no_wrap=True)
         performance.add_column("Value", style="white")
-        performance.add_row("Best Latency", f"[bold yellow]{best_time:.4f} ms[/bold yellow]")
-        performance.add_row("Original Latency", f"{original_latency} ms")
+        if isinstance(best_time, (int, float)) and math.isfinite(best_time):
+            best_latency_text = f"[bold yellow]{best_time:.4f} ms[/bold yellow]"
+        else:
+            best_latency_text = "[bold yellow]unavailable[/bold yellow]"
+
+        if original_latency == PROFILING_FAILURE_LATENCY:
+            original_latency_text = "unavailable"
+        elif isinstance(original_latency, (int, float)):
+            original_latency_text = f"{original_latency} ms"
+        else:
+            original_latency_text = str(original_latency)
+
+        performance.add_row("Best Latency", best_latency_text)
+        performance.add_row("Original Latency", original_latency_text)
     else:
         performance = Table(show_header=False, box=None, padding=(0, 1))
         performance.add_column("Metric", style="bold cyan", no_wrap=True)
@@ -363,6 +470,10 @@ def print_diff(old_code, new_code):
 
 def print_dry_run_panel(title, lines, border_style="yellow"):
     console.print(Panel("\n".join(lines), title=title, border_style=border_style))
+
+
+def _format_command(cmd):
+    return " ".join(str(part) for part in cmd)
 
 def render_environment_summary(title="Local CUDA Environment Status"):
     import socket
@@ -419,9 +530,7 @@ def render_environment_summary(title="Local CUDA Environment Status"):
 
 
 def print_cli_help():
-        help_text = """cudallm CLI Help & Documentation
-==================================================
-Local CUDA performance engineering and AI optimization tools.
+    help_text = """Local CUDA performance engineering and AI optimization tools.
 
 Commands
 --------
@@ -460,39 +569,111 @@ cudallm audit <file|folder> [options]
 
 cudallm ncu <exe> [options]
     Run Nsight Compute and export a CSV report.
+    Use --raw and place profiler options after -- to pass them through verbatim.
 
 cudallm nsys <exe> [options]
-    Run Nsight Systems timeline capture.
+    Run Nsight Systems commands directly.
+    Use --command to select profile/start/stats/analyze/export/sessions/status/stop/shutdown.
+    Use --raw and place profiler options after -- to pass them through verbatim.
 
 cudallm profile <exe> [options]
     Auto-select ncu or nsys depending on what is available.
 
+cudallm help
+    Print this page.
+
 Useful flags
 ------------
-optimize:
-    --dry-run        Show the planned flow without compiling or profiling.
-    --nvtx           Inject NVTX ranges into the generated harness.
-    --apply-nvtx     Apply an NVTX suggestion file during compilation.
-    --profile-mode   Choose none, auto, ncu, nsys, or code.
-
-expert:
-    --dry-run        Show the planned expert flow without running profilers.
-    --auto-nvtx      Ask the LLM for NVTX insertion suggestions.
-    --rerun          Re-run profiling after NVTX suggestions are generated.
-    --code           Use cudaProfilerApi capture range for NSYS.
+setup-gpu:
+    --dry-run        Show the checks without executing any remediation.
+    --force-reinstall Ignored/deprecated compatibility flag.
 
 serve:
-    --file           GGUF file name. Default: cudaLLM-8B.Q4_K_M.gguf
-    --host           Bind host/interface for the server.
-    --public-url     Reachable URL to store in config for clients.
-    --api-key-file   Path to a file with API keys for server auth.
+    --port           LM Studio port (default 1234).
+    --host           Host/interface to probe.
+    --public-url     Public client endpoint to store in config.
+    --api-key        API key to store in config.
+    --api-key-file   File containing one or more API keys.
     --ssl-key-file   PEM private key for HTTPS.
     --ssl-cert-file  PEM certificate for HTTPS.
-    --no-update      Deprecated (retained for backward compatibility).
+    --allow-unsafe-network Allow server access without API key/TLS.
+    --reuse-port     Allow multiple sockets to bind to the same port.
+    --repo           HuggingFace repository name for compatibility.
+    --file           GGUF file name. Default: cudaLLM-8B.Q4_K_M.gguf.
+    --local-model    Local model path.
+    --use-cuda       Enable CUDA for the Python backend.
+    --ngl            Deprecated compatibility flag.
+    --ctx            Deprecated compatibility flag.
+    --parallel       Deprecated compatibility flag.
+    --no-update      Deprecated compatibility flag.
 
 agent:
     --instruction    Instruction for the LangChain agent.
     --llm-url        Override the LLM backend URL.
+    --llm-api-key    Override the LLM API key.
+    --llm-api-key-file Override the LLM API key file.
+    --insecure       Disable TLS verification for remote HTTP backends.
+
+optimize:
+    --output         Output path for optimized code.
+    --iters          Number of optimization iterations.
+    --target         Optimization target metric.
+    --retries        Retry count for healing loops.
+    --fast-math      Inject -use_fast_math into compilation.
+    --opt-level      NVCC optimization level.
+    --report         Emit an optimization report.
+    --recursive/--no-recursive Recurse into subfolders when optimizing a directory.
+    --dry-run        Show the planned flow without compiling or profiling.
+    --nvtx           Inject NVTX ranges into the generated harness.
+    --apply-nvtx     Apply an NVTX suggestion file during compilation.
+    --ncu-metrics    Comma-separated Nsight Compute metrics.
+    --profile-mode   Choose none, auto, auto-strict, auto-relaxed, ncu, nsys, or code.
+    --llm-url        Override the LLM backend URL.
+    --llm-api-key    Override the LLM API key.
+    --llm-api-key-file Override the LLM API key file.
+    --insecure       Disable TLS verification for remote HTTP backends.
+
+expert:
+    --metrics        Comma-separated Nsight Compute metrics for the broad sweep.
+    --run-deep       Run a follow-up deep NCU collection.
+    --code           Use cudaProfilerApi capture range for NSYS.
+    --auto-nvtx      Ask the LLM for NVTX insertion suggestions.
+    --rerun          Re-run profiling after NVTX suggestions are generated.
+    --dry-run        Show the planned expert flow without running profilers.
+    --llm-url        Override the LLM backend URL.
+    --llm-api-key    Override the LLM API key.
+    --llm-api-key-file Override the LLM API key file.
+    --insecure       Disable TLS verification for remote HTTP backends.
+
+audit:
+    --markdown       Write markdown reports instead of printing only.
+    --recursive/--no-recursive Recurse into subfolders when auditing a directory.
+    --llm-url        Override the LLM backend URL.
+    --llm-api-key    Override the LLM API key.
+    --llm-api-key-file Override the LLM API key file.
+    --insecure       Disable TLS verification for remote HTTP backends.
+
+ncu:
+    --metrics        Comma-separated Nsight Compute metrics.
+    --output         Output basename for the CSV/report.
+    --raw            Bypass wrapper defaults and pass raw profiler options after --.
+    --timeout        Timeout in seconds.
+    --dry-run        Print the exact command without running it.
+
+nsys:
+    --output         Output basename for the report.
+    --command        Select profile, launch, start, stats, analyze, export, sessions, status, stop, or shutdown.
+    --trace          Trace set for profile-style commands.
+    --capture-range  Capture range for profile-style commands.
+    --code           Use cudaProfilerApi capture range.
+    --raw            Bypass wrapper defaults and pass raw profiler options after --.
+    --timeout        Timeout in seconds.
+    --dry-run        Print the exact command without running it.
+
+profile:
+    --mode           Choose auto, ncu, or nsys.
+    --metrics        Nsight Compute metrics when using ncu.
+    --code           Use cudaProfilerApi capture range for nsys.
 
 dashboard:
     --port           Port to run the dashboard server on (default 8000).
@@ -500,6 +681,11 @@ dashboard:
 sandbox-run:
     --image          Docker image to use.
     --cmd            Command to run inside the container.
+    --mount          Volume mount in host:container form (repeatable).
+    --workdir        Working directory inside the container.
+    --mount-cwd/--no-mount-cwd Mount the current directory into the container.
+    --timeout        Timeout in seconds.
+    --mem-limit-mb   Optional memory limit in MB.
 
 Examples
 --------
@@ -513,7 +699,7 @@ cudallm agent --instruction "Profile examples/vector_add.cu with ncu"
 cudallm dashboard --port 8000
 cudallm sandbox-run --image nvidia/cuda:12.2.0-devel-ubuntu22.04 --cmd "nvcc --version"
 """
-        console.print(help_text)
+    console.print(help_text)
 
 def optimize_single_file(input_file, output, iters, target, retries, fast_math, opt_level, report, llm, env_info, profile_mode='none', use_nvtx=False, ncu_metrics='', apply_nvtx=False):
     import uuid
@@ -558,37 +744,15 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
 
             dashboard = IterationDashboard(i+1, iters)
             with Live(dashboard, refresh_per_second=4) as live:
-
                 dashboard.update_status("Prompting local LLM for optimization...")
-                ncu_csv_path = prof_res.get("ncu_csv") if (i > 0 and 'prof_res' in locals()) else None
-                prompt = llm.create_optimization_prompt(
-                    current_code,
-                    env_info,
-                    target,
-                    best_time,
-                    flags,
-                    ncu_csv=ncu_csv_path,
-                    history=history
-                )
+                prompt = llm.create_optimization_prompt(current_code, env_info, target, best_time, flags)
 
-                new_code, gen_time = llm.generate_code(
-                    prompt,
-                    status_callback=dashboard.update_status,
-                    prefill=True,
-                )
+                live.stop()
+                new_code, gen_time = llm.generate_code(prompt, prefill=True)
+                live.start()
 
                 if not new_code:
                     dashboard.update_status("No CUDA code returned; skipping iteration.", "dots")
-                    console.print(Panel(
-                        "[bold red]No CUDA code was returned.[/bold red]\n"
-                        "The model likely produced prose-only output or stopped before emitting a CUDA block.\n\n"
-                        "[bold]What to check:[/bold]\n"
-                        "- Tighten the prompt so the final answer must be a single ```cuda block.\n"
-                        "- Keep code generation in prefill mode so the assistant starts inside a code fence.\n"
-                        "- Verify the model is not truncating the response early.",
-                        title="LLM Output Issue",
-                        border_style="red",
-                    ))
                     try:
                         t_file = f"temp_kernel_{run_id}.cu"
                         if os.path.exists(t_file):
@@ -697,17 +861,27 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
                 time.sleep(0.5)
 
             console.print("[bold green]Code compiled successfully![/bold green]")
-            console.print(f"[bold]Kernel Latency:[/bold] [bold yellow]{latency:.4f} ms[/bold yellow] (Gen Time: {gen_time:.2f}s, Profiler: {prof_res.get('raw_output', 'Fallback')})")
+            if is_profiling_failure(latency):
+                console.print(build_profiler_failure_panel(latency, prof_res, gen_time, profile_mode))
+            else:
+                console.print(
+                    f"[bold]Kernel Latency:[/bold] [bold yellow]{latency:.4f} ms[/bold yellow] "
+                    f"(Gen Time: {gen_time:.2f}s, Profiler: {prof_res.get('raw_output', 'Fallback')})"
+                )
 
             history.append({
                 "iteration": i+1,
                 "latency": latency,
                 "compile_success": True,
-                "gen_time": gen_time
+                "gen_time": gen_time,
+                "fallback_latency": prof_res.get("fallback_latency"),
+                "profiling_blocked_reason": prof_res.get("profiling_blocked_reason"),
+                "effective_latency": effective_latency_for_selection(latency, prof_res, profile_mode),
             })
 
-            if latency < best_time:
-                best_time = latency
+            candidate_latency = effective_latency_for_selection(latency, prof_res, profile_mode)
+            if candidate_latency is not None and candidate_latency < best_time:
+                best_time = candidate_latency
                 console.print("[bold green]New Best Latency Achieved! Modifying code...[/bold green]")
                 print_diff(best_code, new_code)
                 best_code = new_code
@@ -722,7 +896,17 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
 
         if compile_enabled:
             original_latency = history[0]['latency'] if history else "unknown"
-            profiling_status = "Profiled" if (history and history[0]['latency'] != 99999.0) else "Profiler Fallback"
+            if history and is_profiling_failure(history[0]['latency']):
+                fallback_latency = history[0].get('fallback_latency')
+                if isinstance(fallback_latency, (int, float)) and math.isfinite(fallback_latency):
+                    original_latency = f"unavailable (fallback timer: {fallback_latency:.4f} ms)"
+            first_entry = history[0] if history else {}
+            if history and not is_profiling_failure(first_entry.get('latency')):
+                profiling_status = "Profiled"
+            elif profile_mode == "auto-relaxed":
+                profiling_status = "Profiler Fallback (relaxed ranking)"
+            else:
+                profiling_status = "Profiler Fallback"
             console.print(print_optimization_summary(
                 output=output,
                 best_time=best_time,
@@ -748,11 +932,12 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
                 "timestamp": datetime.now().isoformat(),
                 "environment": env_info,
                 "flags": flags,
+                "profile_mode": profile_mode,
                 "best_latency": None if not compile_enabled else best_time,
                 "history": history
             }
             report_dir = os.path.dirname(output) or "."
-            report_file = os.path.join(report_dir, f"report_{os.path.basename(input_file)}.json")
+            report_file = os.path.join(report_dir, build_report_filename(input_file, profile_mode))
             save_report(report_data, report_file)
             console.print(f"[bold blue][INFO] Detailed report saved to {report_file}[/bold blue]")
 
@@ -849,7 +1034,7 @@ def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure):
 @click.option('-O', '--opt-level', default='3')
 @click.option('--report', is_flag=True)
 @click.option('--recursive/--no-recursive', default=True, help='Recurse into subfolders when input is a directory')
-@click.option('--profile-mode', type=click.Choice(['none','auto','ncu','nsys','code']), default='none', help='Profiling backend or mode to use')
+@click.option('--profile-mode', type=click.Choice(['none','auto','auto-strict','auto-relaxed','ncu','nsys','code']), default='none', help='Profiling backend or mode to use')
 @click.option('--nvtx', is_flag=True, help='Inject NVTX ranges into generated harness')
 @click.option('--apply-nvtx', is_flag=True, help='If set, apply LLM-produced NVTX suggestion (nvtx_suggestion.cu) into the harness during compilation')
 @click.option('--ncu-metrics', default='', help='Comma-separated list of ncu metrics to collect (e.g. sm__sass_thread_inst_executed_avg)')
@@ -1101,12 +1286,15 @@ def sandbox_run(image, cmd_text, mount, workdir, mount_cwd, timeout, mem_limit_m
         console.print(Panel(result.get('stderr', ''), title='[bold red]Stderr[/bold red]', border_style='red'))
 
 
-@main.command()
+@main.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.argument('exe', type=click.Path(exists=True))
 @click.option('--metrics', default='', help='Comma-separated ncu metrics')
 @click.option('-o', '--output', default=None, help='Output basename (for CSV or report)')
-def ncu(exe, metrics, output):
-    """Run Nsight Compute (ncu) against an executable and export CSV."""
+@click.option('--raw', is_flag=True, help='Bypass wrapper defaults and pass raw ncu arguments through verbatim')
+@click.option('--timeout', default=600, type=int, help='Timeout in seconds')
+@click.option('--dry-run', is_flag=True, help='Print the exact command without running it')
+def ncu(exe, metrics, output, raw, timeout, dry_run):
+    """Run Nsight Compute (ncu) against an executable and export CSV, with raw profiler passthrough after --."""
     ncu_bin = find_ncu_path()
     if not ncu_bin:
         console.print('[bold red]ncu not found on this system.[/bold red]')
@@ -1116,16 +1304,25 @@ def ncu(exe, metrics, output):
     
     from .discover import find_ncu_sections_path
     sections_path = find_ncu_sections_path(ncu_bin)
-    
-    cmd = [ncu_bin]
-    if sections_path:
-        cmd.extend(['--section-folder', sections_path])
-    if metrics:
-        cmd += ['--metrics', metrics]
-    cmd += ['--csv', '-o', base, exe]
+
+    ctx = click.get_current_context(silent=True)
+    extra_args = list(ctx.args) if ctx else []
+
+    cmd = build_ncu_command(
+        ncu_bin,
+        exe,
+        output_base=None if raw else base,
+        metrics=metrics,
+        section_folder=sections_path,
+        extra_args=extra_args,
+        include_csv=not raw,
+    )
     try:
-        console.print(f'[blue]Running:[/blue] {" ".join(cmd)}')
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
+        console.print(f'[blue]Running:[/blue] {_format_command(cmd)}')
+        if dry_run:
+            console.print(Panel("\n".join(cmd), title='ncu dry run'))
+            return
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
         out = res.stdout + res.stderr
         console.print(Panel(out[:2000], title='ncu output'))
         csv_path = f"{base}.csv"
@@ -1137,26 +1334,57 @@ def ncu(exe, metrics, output):
         console.print(f'[red]Failed to run ncu: {e}[/red]')
 
 
-@main.command()
-@click.argument('exe', type=click.Path(exists=True))
-@click.option('-o', '--output', default='nsys_report', help='Output basename')
+@main.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.argument('exe', required=False, type=click.Path(exists=False))
+@click.option('--command', 'nsys_command', type=click.Choice(['profile', 'launch', 'start', 'stats', 'analyze', 'export', 'sessions', 'status', 'stop', 'shutdown']), default='profile', help='Nsight Systems subcommand to run')
+@click.option('-o', '--output', default='nsys_report', help='Output basename for profile-style commands')
+@click.option('--trace', default='cuda,cudnn', help='Trace set for profile-style commands')
+@click.option('--capture-range', default=None, help='Capture range for profile-style commands')
 @click.option('--code', is_flag=True, help='Use cudaProfilerApi capture range (for code-driven profiling)')
-def nsys(exe, output, code):
-    """Run Nsight Systems (nsys) timeline capture against an executable."""
+@click.option('--raw', is_flag=True, help='Bypass wrapper defaults and pass raw nsys arguments through verbatim')
+@click.option('--timeout', default=900, type=int, help='Timeout in seconds')
+@click.option('--dry-run', is_flag=True, help='Print the exact command without running it')
+def nsys(exe, nsys_command, output, trace, capture_range, code, raw, timeout, dry_run):
+    """Run Nsight Systems (nsys) commands directly, including raw passthrough after --."""
     nsys_bin = find_nsys_path()
     if not nsys_bin:
         console.print('[bold red]nsys not found on this system.[/bold red]')
         return
-    cmd = [nsys_bin, 'profile', '--output', output, '--trace', 'cuda,cudnn']
-    if code:
-        cmd += ['--capture-range=cudaProfilerApi']
-    cmd += [exe]
+
+    ctx = click.get_current_context(silent=True)
+    extra_args = list(ctx.args) if ctx else []
+
+    if nsys_command in {'profile', 'launch', 'start'}:
+        if not exe:
+            raise click.ClickException(f"nsys {nsys_command} requires an executable target")
+        capture_range = capture_range or ('cudaProfilerApi' if code else None)
+        cmd = build_nsys_command(
+            nsys_bin,
+            exe,
+            output_base=None if raw else output,
+            trace=None if raw else trace,
+            capture_range=None if raw else capture_range,
+            command=nsys_command,
+            extra_args=extra_args,
+        )
+    else:
+        if exe:
+            extra_args = [exe] + extra_args
+        cmd = build_nsys_command(
+            nsys_bin,
+            command=nsys_command,
+            extra_args=extra_args,
+        )
     try:
-        console.print(f'[blue]Running:[/blue] {" ".join(cmd)}')
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
+        console.print(f'[blue]Running:[/blue] {_format_command(cmd)}')
+        if dry_run:
+            console.print(Panel("\n".join(cmd), title='nsys dry run'))
+            return
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
         out = res.stdout + res.stderr
         console.print(Panel(out[:2000], title='nsys output'))
-        console.print(f'[green]NSYS report basename:[/green] {os.path.abspath(output)}')
+        if nsys_command in {'profile', 'launch', 'start'}:
+            console.print(f'[green]NSYS report basename:[/green] {os.path.abspath(output)}')
     except Exception as e:
         console.print(f'[red]Failed to run nsys: {e}[/red]')
 

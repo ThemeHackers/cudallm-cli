@@ -8,7 +8,7 @@ from src.discover import find_nvcc_path
 from src.llm_client import LLMClient
 from src.profiler_tools import parse_ncu_csv_for_hotspot
 from tools.compare_ncu import numeric_columns
-from src.profiler_tools import run_ncu_broad
+from src.profiler_tools import run_ncu_broad, build_ncu_command, build_nsys_command
 
 
 class TestHarnessFixes(unittest.TestCase):
@@ -64,6 +64,135 @@ class TestHarnessFixes(unittest.TestCase):
 
         payload = mock_post.call_args.kwargs["json"]
         self.assertTrue(payload["prompt"].endswith("```cuda\n"))
+
+    @patch("src.sandbox.find_ncu_path")
+    @patch("src.sandbox.find_nsys_path")
+    @patch("src.sandbox.os.path.exists")
+    @patch("src.sandbox.subprocess.run")
+    def test_ncu_permission_error_is_reported_explicitly(self, mock_run, mock_exists, mock_find_nsys, mock_find_ncu):
+        from src.sandbox import CUDASandbox
+
+        mock_find_ncu.return_value = "ncu"
+        mock_find_nsys.return_value = None
+
+        def exists_side_effect(path):
+            return path == "dummy.exe"
+
+        mock_exists.side_effect = exists_side_effect
+
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.stderr = "==ERROR== ERR_NVGPUCTRPERM - permission denied"
+        mock_run.return_value = mock_result
+
+        sandbox = CUDASandbox("dummy.cu", profile_mode="ncu")
+        sandbox.exe_path = "dummy.exe"
+
+        result = sandbox.profile_latency()
+
+        self.assertEqual(result["latency"], 99999.0)
+        self.assertIn("ERR_NVGPUCTRPERM", result["raw_output"])
+        self.assertIn("not a valid benchmark", result["raw_output"])
+        self.assertIn("Windows quick fix", result["raw_output"])
+        self.assertIn("Manage GPU Performance Counters", result["raw_output"])
+
+    @patch("src.sandbox.find_ncu_path")
+    @patch("src.sandbox.find_nsys_path")
+    @patch("src.sandbox.os.path.exists")
+    @patch("src.sandbox.subprocess.run")
+    def test_ncu_permission_error_records_timer_fallback(self, mock_run, mock_exists, mock_find_nsys, mock_find_ncu):
+        from src.sandbox import CUDASandbox
+
+        mock_find_ncu.return_value = "ncu"
+        mock_find_nsys.return_value = None
+
+        def exists_side_effect(path):
+            return path == "dummy.exe"
+
+        mock_exists.side_effect = exists_side_effect
+
+        ncu_result = MagicMock()
+        ncu_result.returncode = 1
+        ncu_result.stdout = ""
+        ncu_result.stderr = "==ERROR== ERR_NVGPUCTRPERM - permission denied"
+
+        exe_result = MagicMock()
+        exe_result.returncode = 0
+        exe_result.stdout = "TOTAL_LATENCY: 1.25 ms\n"
+        exe_result.stderr = ""
+
+        mock_run.side_effect = [ncu_result, exe_result]
+
+        sandbox = CUDASandbox("dummy.cu", profile_mode="ncu")
+        sandbox.exe_path = "dummy.exe"
+
+        result = sandbox.profile_latency()
+
+        self.assertEqual(result["latency"], 99999.0)
+        self.assertEqual(result["profiling_blocked_reason"], "ncu_permission")
+        self.assertEqual(result["fallback_latency"], 1.25)
+        self.assertIn("Fallback executable timing: 1.2500 ms", result["raw_output"])
+
+    @patch("src.sandbox.find_ncu_path")
+    @patch("src.sandbox.find_nsys_path")
+    @patch("src.sandbox.os.path.exists")
+    @patch("src.sandbox.subprocess.run")
+    def test_nsys_failure_uses_nsys_specific_message(self, mock_run, mock_exists, mock_find_nsys, mock_find_ncu):
+        from src.sandbox import CUDASandbox
+
+        mock_find_ncu.return_value = None
+        mock_find_nsys.return_value = "nsys"
+
+        def exists_side_effect(path):
+            return path == "dummy.exe"
+
+        mock_exists.side_effect = exists_side_effect
+
+        nsys_result = MagicMock()
+        nsys_result.returncode = 1
+        nsys_result.stdout = ""
+        nsys_result.stderr = "nsys profile failed"
+
+        mock_run.return_value = nsys_result
+
+        sandbox = CUDASandbox("dummy.cu", profile_mode="nsys")
+        sandbox.exe_path = "dummy.exe"
+
+        result = sandbox.profile_latency()
+
+        self.assertEqual(result["latency"], 99999.0)
+        self.assertIn("NSYS profiling failed", result["raw_output"])
+        self.assertNotIn("NCU profiling failed", result["raw_output"])
+        self.assertNotIn("checking the NCU setup", result["raw_output"])
+
+    @patch("src.sandbox.find_ncu_path")
+    @patch("src.sandbox.find_nsys_path")
+    @patch("src.sandbox.os.path.exists")
+    @patch("src.sandbox.subprocess.run")
+    def test_auto_relaxed_still_prefers_ncu_profiler_path(self, mock_run, mock_exists, mock_find_nsys, mock_find_ncu):
+        from src.sandbox import CUDASandbox
+
+        mock_find_ncu.return_value = "ncu"
+        mock_find_nsys.return_value = "nsys"
+
+        def exists_side_effect(path):
+            return path == "dummy.exe"
+
+        mock_exists.side_effect = exists_side_effect
+
+        ncu_result = MagicMock()
+        ncu_result.returncode = 0
+        ncu_result.stdout = ""
+        ncu_result.stderr = ""
+
+        mock_run.return_value = ncu_result
+
+        sandbox = CUDASandbox("dummy.cu", profile_mode="auto-relaxed")
+        sandbox.exe_path = "dummy.exe"
+        sandbox.profile_latency()
+
+        cmd = mock_run.call_args.args[0]
+        self.assertEqual(cmd[0], "ncu")
 
     @patch("src.llm_client.validate_llm_endpoint")
     @patch("src.llm_client.build_auth_headers")
@@ -205,8 +334,9 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertIn("runtime failure", warning)
 
     @patch("src.discover.find_nvcc_path", return_value="nvcc")
+    @patch("src.sandbox.CUDASandbox._collect_reference_checksums", return_value="Could not collect reference checksums: harness execution failed (runtime failure)")
     @patch("src.sandbox.subprocess.run")
-    def test_compile_surfaces_reference_collection_warning(self, mock_run, mock_find_nvcc):
+    def test_compile_surfaces_reference_collection_warning(self, mock_run, mock_collect_refs, mock_find_nvcc):
         from src.sandbox import CUDASandbox
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -221,7 +351,7 @@ class TestHarnessFixes(unittest.TestCase):
             mock_compile.stdout = ""
             mock_compile.stderr = ""
 
-            mock_run.side_effect = [mock_compile, MagicMock(returncode=1, stdout="", stderr="runtime failure")]
+            mock_run.return_value = mock_compile
 
             result = sandbox.compile()
 
@@ -442,6 +572,59 @@ class TestHarnessFixes(unittest.TestCase):
         self.assertIn("-o", cmd)
         self.assertIn("sample_report", cmd)
         self.assertNotIn("--output", cmd)
+
+    def test_build_ncu_command_supports_raw_passthrough(self):
+        cmd = build_ncu_command(
+            "ncu",
+            "dummy.exe",
+            output_base=None,
+            metrics=None,
+            section_folder=None,
+            extra_args=["--section", "SpeedOfLight", "--page", "raw"],
+            include_csv=False,
+        )
+
+        self.assertEqual(
+            cmd,
+            ["ncu", "dummy.exe", "--section", "SpeedOfLight", "--page", "raw"],
+        )
+
+    def test_build_nsys_command_supports_profile_and_status(self):
+        profile_cmd = build_nsys_command(
+            "nsys",
+            "dummy.exe",
+            output_base="trace_report",
+            trace="cuda,cudnn",
+            capture_range="cudaProfilerApi",
+            command="profile",
+            extra_args=["--force-overwrite=true"],
+        )
+
+        self.assertEqual(
+            profile_cmd,
+            [
+                "nsys",
+                "profile",
+                "--output",
+                "trace_report",
+                "--trace",
+                "cuda,cudnn",
+                "--capture-range=cudaProfilerApi",
+                "dummy.exe",
+                "--force-overwrite=true",
+            ],
+        )
+
+        status_cmd = build_nsys_command(
+            "nsys",
+            command="status",
+            extra_args=["--force-overwrite=true"],
+        )
+
+        self.assertEqual(
+            status_cmd,
+            ["nsys", "status", "--force-overwrite=true"],
+        )
 
     @patch("src.sandbox.find_ncu_path", return_value="ncu")
     @patch("src.sandbox.find_nsys_path", return_value=None)

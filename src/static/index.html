@@ -1709,6 +1709,8 @@
                             <label class="control-label">Profiling Mode</label>
                             <select id="opt-profile-mode">
                                 <option value="auto">Auto (Choose best)</option>
+                                <option value="auto-strict">Auto Strict (require valid profiler)</option>
+                                <option value="auto-relaxed">Auto Relaxed (allow fallback timer ranking)</option>
                                 <option value="ncu">Nsight Compute (ncu)</option>
                                 <option value="nsys">Nsight Systems (nsys)</option>
                                 <option value="code">Code API driven</option>
@@ -1835,6 +1837,7 @@
                                         <tr>
                                             <th>Run</th>
                                             <th>Preset</th>
+                                            <th>Mode</th>
                                             <th>Best Latency</th>
                                             <th>Speedup</th>
                                             <th>Status</th>
@@ -1843,7 +1846,7 @@
                                         </tr>
                                     </thead>
                                     <tbody id="benchmark-history-body">
-                                        <tr><td colspan="7" style="color: var(--text-muted);">No benchmark history yet.</td></tr>
+                                        <tr><td colspan="8" style="color: var(--text-muted);">No benchmark history yet.</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -2606,9 +2609,11 @@ __global__ void my_kernel() {
                 const statusClass = run.status === 'completed' ? 'good' : (run.status === 'failed' ? 'bad' : 'warn');
                 const bestLatency = getLatencyLabel(run.best_time);
                 const speedup = run.speedup ? `${Number(run.speedup).toFixed(2)}x` : '-';
+                const profileMode = run.profile_mode_label || run.profile_mode || 'auto';
                 row.innerHTML = `
                     <td>${escapeHtml(run.run_id || '-')}</td>
                     <td>${escapeHtml(run.preset || 'balanced')}</td>
+                    <td>${escapeHtml(profileMode)}</td>
                     <td>${escapeHtml(bestLatency)}</td>
                     <td>${escapeHtml(speedup)}</td>
                     <td><span class="status-pill ${statusClass}">${escapeHtml((run.status || 'unknown').toUpperCase())}</span></td>
@@ -2629,7 +2634,8 @@ __global__ void my_kernel() {
             benchmarkRuns.slice().reverse().forEach(run => {
                 const option = document.createElement('option');
                 option.value = run.run_id;
-                option.textContent = `${run.run_id} - ${run.preset || 'balanced'} - ${run.status || 'unknown'}`;
+                const profileMode = run.profile_mode_label || run.profile_mode || 'auto';
+                option.textContent = `${run.run_id} - ${run.preset || 'balanced'} - ${profileMode} - ${run.status || 'unknown'}`;
                 runSelect.appendChild(option);
             });
             if (currentValue && benchmarkRuns.some(run => run.run_id === currentValue)) {
@@ -2720,6 +2726,7 @@ __global__ void my_kernel() {
                 const chips = [];
                 chips.push(`<span class="chip">Run ${escapeHtml(run.run_id || '-')}</span>`);
                 chips.push(`<span class="chip">Preset: ${escapeHtml(run.preset || 'balanced')}</span>`);
+                chips.push(`<span class="chip">Mode: ${escapeHtml(run.profile_mode_label || run.profile_mode || 'auto')}</span>`);
                 chips.push(`<span class="chip">Iteration ${escapeHtml(historyItem.iteration)}</span>`);
                 chips.push(`<span class="chip">Latency: ${escapeHtml(getLatencyLabel(historyItem.latency))}</span>`);
                 chips.push(`<span class="chip">Compile: ${historyItem.compile_success ? 'Success' : 'Failed'}</span>`);
@@ -2888,6 +2895,7 @@ ${historyItem.raw_output}`);
                     const statusVal = document.getElementById('opt-status-val');
                     if (statusVal) {
                         statusVal.innerText = data.status.toUpperCase();
+                        statusVal.title = data.current_profile_mode_label || data.current_profile_mode || data.profile_mode || '';
                     }
                     if (data.status === 'running') {
                         if (statusVal) {

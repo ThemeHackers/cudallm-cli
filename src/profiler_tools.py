@@ -3,6 +3,46 @@ import os
 import subprocess
 from datetime import datetime
 
+
+def _normalize_extra_args(extra_args):
+    if not extra_args:
+        return []
+    if isinstance(extra_args, (list, tuple)):
+        return [arg for arg in extra_args if arg is not None and str(arg).strip() != ""]
+    return [str(extra_args)]
+
+
+def build_ncu_command(ncu_bin, exe, output_base=None, metrics=None, section_folder=None, extra_args=None, include_csv=True):
+    cmd = [ncu_bin]
+    if section_folder:
+        cmd.extend(["--section-folder", section_folder])
+    if metrics:
+        cmd.extend(["--metrics", metrics])
+    if include_csv:
+        if output_base:
+            cmd.extend(["--csv", "-o", output_base])
+        else:
+            cmd.append("--csv")
+    elif output_base:
+        cmd.extend(["-o", output_base])
+    cmd.append(exe)
+    cmd.extend(_normalize_extra_args(extra_args))
+    return cmd
+
+
+def build_nsys_command(nsys_bin, exe=None, output_base=None, trace=None, capture_range=None, command="profile", extra_args=None):
+    cmd = [nsys_bin, command]
+    if command in {"profile", "launch", "start"} and output_base:
+        cmd.extend(["--output", output_base])
+    if command in {"profile", "launch", "start"} and trace:
+        cmd.extend(["--trace", trace])
+    if command in {"profile", "launch", "start"} and capture_range:
+        cmd.append(f"--capture-range={capture_range}")
+    if exe:
+        cmd.append(exe)
+    cmd.extend(_normalize_extra_args(extra_args))
+    return cmd
+
 def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
     nsys = None
     try:
@@ -12,15 +52,19 @@ def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
         pass
     if not nsys:
         return {"error": "nsys not found"}
-    cmd = [nsys, 'profile', '--output', output_base, '--trace', 'cuda,cudnn,nvtx']
-    if code:
-        cmd += ['--capture-range=cudaProfilerApi']
-    cmd += [exe]
+    cmd = build_nsys_command(
+        nsys,
+        exe,
+        output_base=output_base,
+        trace='cuda,cudnn,nvtx',
+        capture_range='cudaProfilerApi' if code else None,
+        command='profile',
+    )
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     out = res.stdout + res.stderr
-    return {"out": out, "basename": output_base}
+    return {"out": out, "basename": output_base, "command": cmd}
 
-def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
+def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600, extra_args=None):
     from .discover import find_ncu_path, find_ncu_sections_path
     ncu = find_ncu_path()
     if not ncu:
@@ -29,17 +73,16 @@ def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = output_base or f'ncu_expert_{ts}'
     
-    cmd = [ncu]
-    if sections_path:
-        cmd.extend(['--section-folder', sections_path])
-    cmd.extend(['--csv', '-o', base, exe])
-    
-    if metrics:
-        cmd = [ncu]
-        if sections_path:
-            cmd.extend(['--section-folder', sections_path])
-        cmd.extend(['--metrics', metrics, '--csv', '-o', base, exe])
-        
+    cmd = build_ncu_command(
+        ncu,
+        exe,
+        output_base=base,
+        metrics=metrics,
+        section_folder=sections_path,
+        extra_args=extra_args,
+        include_csv=True,
+    )
+
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     out = res.stdout + res.stderr
     csv_path = f"{base}.csv"
@@ -58,7 +101,7 @@ def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600):
         except Exception:
             pass
 
-    return {"out": out, "csv": csv_path, "basename": base}
+    return {"out": out, "csv": csv_path, "basename": base, "command": cmd}
 
 def parse_ncu_csv_for_hotspot(csv_path, target_metric=None):
     if not os.path.exists(csv_path):

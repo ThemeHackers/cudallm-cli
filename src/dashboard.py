@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import threading
 import time
 import urllib.parse
@@ -130,6 +131,31 @@ def record_profile_result(run_state, key, prof_res):
     run_state[f"{key}_profiling_failed"] = profile_failed
     run_state[f"{key}_raw_output"] = raw_output
     return latency, profile_failed, raw_output
+
+
+def effective_latency_for_selection(latency, prof_res, profile_mode):
+    if latency is None:
+        return None
+    if not is_profiling_failure(latency):
+        return latency
+    if profile_mode == "auto-relaxed":
+        fallback_latency = prof_res.get("fallback_latency") if isinstance(prof_res, dict) else None
+        if isinstance(fallback_latency, (int, float)) and math.isfinite(fallback_latency):
+            return fallback_latency
+    return None
+
+
+def profile_mode_label(profile_mode):
+    labels = {
+        "none": "none (timer only)",
+        "auto": "auto (strict profiler selection)",
+        "auto-strict": "auto-strict (benchmark-only)",
+        "auto-relaxed": "auto-relaxed (fallback ranking enabled)",
+        "ncu": "ncu (Nsight Compute)",
+        "nsys": "nsys (Nsight Systems)",
+        "code": "code (cudaProfilerApi)",
+    }
+    return labels.get(profile_mode, profile_mode)
 
 
 def _new_triage_summary():
@@ -348,6 +374,7 @@ def build_benchmark_summary(run_state):
         "target": run_state.get("target"),
         "preset": run_state.get("preset"),
         "profile_mode": run_state.get("profile_mode"),
+        "profile_mode_label": profile_mode_label(run_state.get("profile_mode")),
         "profile_metrics": run_state.get("profile_metrics", ""),
         "flags": run_state.get("flags", []),
         "iters": run_state.get("total_iterations", 0),
@@ -602,6 +629,9 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
                 "llm_allow_insecure_remote": config.get("llm_allow_insecure_remote", False)
             }
         }
+        with active_run_lock:
+            status_data["current_profile_mode"] = active_run.get("profile_mode", "auto")
+            status_data["current_profile_mode_label"] = profile_mode_label(active_run.get("profile_mode", "auto"))
         self.send_json(status_data)
 
     def handle_api_files(self):
@@ -784,6 +814,10 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
         fast_math = bool(body.get('fast_math', False) or preset_config.get('default_fast_math', False))
         opt_level = body.get('opt_level', '3')
         profile_mode = body.get('profile_mode', preset_config.get('default_profile_mode', 'auto'))
+        valid_profile_modes = {'none', 'auto', 'auto-strict', 'auto-relaxed', 'ncu', 'nsys', 'code'}
+        if profile_mode not in valid_profile_modes:
+            self.send_json({"error": f"Invalid profile_mode '{profile_mode}'"}, 400)
+            return
         nvtx = bool(body.get('nvtx', False))
         apply_nvtx = bool(body.get('apply_nvtx', False))
         regression_guard_enabled = bool(body.get('regression_guard_enabled', True))
@@ -935,6 +969,7 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
         env_info = check_environment()
 
         best_time = float('inf')
+        baseline_effective_latency = None
         best_code = original_code
         current_code = original_code
 
@@ -961,10 +996,12 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
                 return
 
             baseline_time = prof_res["latency"]
-            best_time = baseline_time
+            baseline_effective_latency = effective_latency_for_selection(baseline_time, prof_res, profile_mode)
+            if baseline_effective_latency is not None:
+                best_time = baseline_effective_latency
             with active_run_lock:
                 _, baseline_failed, baseline_raw_output = record_profile_result(active_run, "original_latency", prof_res)
-                active_run["best_time"] = baseline_time
+                active_run["best_time"] = best_time
                 append_history_entry(active_run, {
                     "iteration": 0,
                     "latency": baseline_time,
@@ -974,6 +1011,9 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
                     "compile_success": True,
                     "gen_time": 0.0,
                     "status": "baseline",
+                    "fallback_latency": prof_res.get("fallback_latency"),
+                    "profiling_blocked_reason": prof_res.get("profiling_blocked_reason"),
+                    "effective_latency": baseline_effective_latency,
                     "code_snapshot": original_code,
                     "parent_code_snapshot": original_code,
                 })
@@ -1145,8 +1185,14 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
 
             latency = prof_res["latency"]
             profile_failed = is_profiling_failure(latency)
+            effective_latency = effective_latency_for_selection(latency, prof_res, profile_mode)
             if profile_failed:
                 log_event(f"Iteration {i+1} profiling failed: {prof_res.get('raw_output', 'No profiler output captured.')}")
+                if effective_latency is not None:
+                    log_event(
+                        f"Iteration {i+1} using fallback timer for ranking only: {effective_latency:.4f} ms "
+                        "(non-NCU benchmark)."
+                    )
             else:
                 log_event(f"Iteration {i+1} verified latency: {latency:.4f} ms")
 
@@ -1155,17 +1201,20 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
             guard_threshold = float(regression_cfg.get("max_regression_pct", 5.0))
             auto_rollback = bool(regression_cfg.get("auto_rollback", True))
 
-            baseline_valid = isinstance(baseline_time, (int, float)) and not is_profiling_failure(baseline_time) and baseline_time > 0
+            baseline_reference = baseline_effective_latency if baseline_effective_latency is not None else baseline_time
+            baseline_valid = isinstance(baseline_reference, (int, float)) and baseline_reference > 0
             rejected_by_guard = False
             guard_message = ""
-            if guard_enabled and baseline_valid and not profile_failed:
-                max_allowed = baseline_time * (1.0 + (guard_threshold / 100.0))
-                if latency > max_allowed:
+            candidate_for_guard = effective_latency if effective_latency is not None else latency
+            candidate_valid = isinstance(candidate_for_guard, (int, float)) and candidate_for_guard > 0
+            if guard_enabled and baseline_valid and candidate_valid:
+                max_allowed = baseline_reference * (1.0 + (guard_threshold / 100.0))
+                if candidate_for_guard > max_allowed:
                     rejected_by_guard = True
-                    delta_pct = ((latency - baseline_time) / baseline_time) * 100.0
+                    delta_pct = ((candidate_for_guard - baseline_reference) / baseline_reference) * 100.0
                     guard_message = (
                         f"Iteration {i+1} rejected by regression guard: "
-                        f"latency {latency:.4f} ms is {delta_pct:.1f}% slower than baseline "
+                        f"latency {candidate_for_guard:.4f} ms is {delta_pct:.1f}% slower than baseline "
                         f"(threshold {guard_threshold:.1f}%)."
                     )
                     log_event(guard_message)
@@ -1173,8 +1222,8 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
                     with active_run_lock:
                         active_run.setdefault("regression_guard_events", []).append({
                             "iteration": i + 1,
-                            "latency": latency,
-                            "baseline_latency": baseline_time,
+                            "latency": candidate_for_guard,
+                            "baseline_latency": baseline_reference,
                             "delta_pct": delta_pct,
                             "threshold_pct": guard_threshold,
                             "timestamp": time.time(),
@@ -1190,6 +1239,9 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
                     "profiling_failed": profile_failed,
                     "raw_output": prof_res.get("raw_output", ""),
                     "ncu_csv": prof_res.get("ncu_csv"),
+                    "fallback_latency": prof_res.get("fallback_latency"),
+                    "profiling_blocked_reason": prof_res.get("profiling_blocked_reason"),
+                    "effective_latency": effective_latency,
                     "compile_success": True,
                     "gen_time": gen_time,
                     "status": "regression_guard_rejected" if rejected_by_guard else "success",
@@ -1208,12 +1260,16 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
                     active_run["current_code"] = current_code
                 continue
 
-            if not profile_failed and latency < best_time:
-                best_time = latency
+            if effective_latency is not None and effective_latency < best_time:
+                best_time = effective_latency
                 best_code = new_code
-                log_event(f"New best latency achieved! Speedup: {baseline_time / latency:.2f}x")
+                baseline_for_speedup = baseline_effective_latency if baseline_effective_latency is not None else baseline_time
+                if isinstance(baseline_for_speedup, (int, float)) and baseline_for_speedup > 0:
+                    log_event(f"New best latency achieved! Speedup: {baseline_for_speedup / best_time:.2f}x")
+                else:
+                    log_event("New best latency achieved!")
                 with active_run_lock:
-                    active_run["best_time"] = latency
+                    active_run["best_time"] = best_time
                     active_run["best_code"] = best_code
 
             current_code = new_code

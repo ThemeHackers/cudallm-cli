@@ -505,10 +505,80 @@ int main(int argc, char** argv) {{
                     if error_log:
                         error_log += "\n"
                     error_log += f"WARNING: {warning}"
-
             return {"success": success, "error_log": error_log}
         except FileNotFoundError:
             return {"success": False, "error_log": "nvcc not found"}
+
+    def _format_ncu_failure_message(self, output):
+        if "ERR_NVGPUCTRPERM" in output:
+            return (
+                "System issue: ERR_NVGPUCTRPERM (Profiler Fallback).\n"
+                "Cause: cudallm attempted to run NVIDIA Nsight Compute (NCU) for accurate performance profiling, "
+                "but the current user is blocked from accessing NVIDIA hardware performance counters. "
+                "The run therefore used fallback timer mode, and benchmark quality is reduced (Best Latency may be unavailable). "
+                "This run is not a valid benchmark.\n\n"
+                "Windows quick fix:\n"
+                "1) Open NVIDIA Control Panel as Administrator.\n"
+                "2) In the Desktop menu, enable Developer Settings (if not already enabled).\n"
+                "3) Go to Developer > Manage GPU Performance Counters.\n"
+                "4) Set \"Allow access to the GPU performance counters to all users\", then click Apply.\n"
+                "5) Close Terminal/VS Code and reopen as Administrator, then rerun cudallm optimize.\n\n"
+                f"Output logs:\n{output[:500]}"
+            )
+
+        return f"NCU profiling failed to generate CSV report. Output logs:\n{output[:500]}"
+
+    def _format_nsys_failure_message(self, output):
+        if "ERR_NVGPUCTRPERM" in output:
+            return (
+                "System issue: ERR_NVGPUCTRPERM (Profiler Fallback).\n"
+                "Cause: cudallm attempted to run NVIDIA Nsight Systems (NSYS) for timeline profiling, "
+                "but the current user is blocked from accessing NVIDIA hardware performance counters. "
+                "The run therefore used fallback timer mode, and benchmark quality is reduced (Best Latency may be unavailable). "
+                "This run is not a valid benchmark.\n\n"
+                "Windows quick fix:\n"
+                "1) Open NVIDIA Control Panel as Administrator.\n"
+                "2) In the Desktop menu, enable Developer Settings (if not already enabled).\n"
+                "3) Go to Developer > Manage GPU Performance Counters.\n"
+                "4) Set \"Allow access to the GPU performance counters to all users\", then click Apply.\n"
+                "5) Close Terminal/VS Code and reopen as Administrator, then rerun cudallm optimize.\n\n"
+                f"Output logs:\n{output[:500]}"
+            )
+
+        return f"NSYS profiling failed to generate timeline report. Output logs:\n{output[:500]}"
+
+    def _extract_latency_ms(self, output, wallclock_start=None):
+        match = re.search(r"TOTAL_LATENCY:\s*([\d\.]+)\s*(ms|us)?", output, re.IGNORECASE)
+        if match:
+            latency = float(match.group(1))
+            if match.group(2) == 'us':
+                latency /= 1000.0
+            return latency
+
+        match = re.search(r"([\d\.]+)\s*(ms|us)", output)
+        if match:
+            latency = float(match.group(1))
+            if match.group(2) == 'us':
+                latency /= 1000.0
+            return latency
+
+        if wallclock_start is not None:
+            return (time.time() - wallclock_start) * 1000.0
+
+        return None
+
+    def _run_timer_fallback(self, args):
+        cmd = [self.exe_path] + args
+        started = time.time()
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        if result.returncode != 0:
+            err_text = (result.stderr or result.stdout or "fallback execution failed").strip()
+            return {"latency": None, "error": err_text, "raw_output": (result.stdout + result.stderr)[:500]}
+
+        stdout = result.stdout or ""
+        latency = self._extract_latency_ms(stdout, wallclock_start=started)
+        return {"latency": latency, "raw_output": stdout[:500]}
 
     def profile_latency(self, target_metric=None):
         if not os.path.exists(self.exe_path):
@@ -531,7 +601,7 @@ int main(int argc, char** argv) {{
                 profiler = ('nsys', nsys_bin)
             elif self.profile_mode == 'ncu' and ncu_bin:
                 profiler = ('ncu', ncu_bin)
-            elif self.profile_mode == 'auto':
+            elif self.profile_mode in ('auto', 'auto-strict', 'auto-relaxed'):
                 if ncu_bin:
                     profiler = ('ncu', ncu_bin)
                 elif nsys_bin:
@@ -549,10 +619,8 @@ int main(int argc, char** argv) {{
                     return {"latency": 99999.0, "raw_output": f"VERIFICATION FAILURE: {err_msg.strip()}"}
 
                 stdout = result.stdout
-                match = re.search(r"TOTAL_LATENCY:\s*([\d\.]+)\s*ms", stdout)
-                if match:
-                    latency = float(match.group(1))
-                else:
+                latency = self._extract_latency_ms(stdout, wallclock_start=start)
+                if latency is None:
                     latency = (time.time() - start) * 1000.0
 
                 return {"latency": latency, "raw_output": stdout[:500]}
@@ -615,7 +683,25 @@ int main(int argc, char** argv) {{
                         pass
                     return {"latency": latency, "raw_output": out_text, "ncu_csv": os.path.abspath(csv_file)}
                 else:
-                    return {"latency": 99999.0, "raw_output": f"NCU profiling failed to generate CSV report. Output logs:\n{output[:500]}"}
+                    failure_message = self._format_ncu_failure_message(output)
+                    if "ERR_NVGPUCTRPERM" in output:
+                        fallback = self._run_timer_fallback(args)
+                        fallback_latency = fallback.get("latency")
+                        if fallback_latency is not None:
+                            failure_message += (
+                                f"\n\nFallback executable timing: {fallback_latency:.4f} ms "
+                                "(non-NCU; informational only)."
+                            )
+                        elif fallback.get("error"):
+                            failure_message += f"\n\nFallback executable timing failed: {fallback['error']}"
+                        return {
+                            "latency": 99999.0,
+                            "raw_output": failure_message,
+                            "fallback_latency": fallback_latency,
+                            "fallback_raw_output": fallback.get("raw_output", ""),
+                            "profiling_blocked_reason": "ncu_permission",
+                        }
+                    return {"latency": 99999.0, "raw_output": failure_message}
 
             cmd = [binpath, 'profile', '--output', f'nsys_report_{self.run_id}', '--trace', 'cuda']
             if self.profile_mode == 'code':
@@ -634,20 +720,10 @@ int main(int argc, char** argv) {{
                 except Exception as e:
                     output = f"nsys invocation failed: {e}"
 
-            match = re.search(r'TOTAL_LATENCY:\s*([\d\.]+)\s*(ms|us)?', output, re.IGNORECASE)
-            if match:
-                latency = float(match.group(1))
-                if match.group(2) == 'us':
-                    latency /= 1000.0
+            latency = self._extract_latency_ms(output)
+            if latency is not None:
                 return {"latency": latency, "raw_output": output[:500]}
 
-            match = re.search(r'([\d\.]+)\s*(ms|us)', output)
-            if match:
-                latency = float(match.group(1))
-                if match.group(2) == 'us':
-                    latency /= 1000.0
-                return {"latency": latency, "raw_output": output[:500]}
-
-            return {"latency": 99999.0, "raw_output": output[:500]}
+            return {"latency": 99999.0, "raw_output": self._format_nsys_failure_message(output)}
         except Exception as e:
-            return {"latency": 99999.0, "raw_output": str(e)}
+            return {"latency": 99999.0, "raw_output": self._format_nsys_failure_message(str(e))}

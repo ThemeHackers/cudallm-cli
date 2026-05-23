@@ -32,20 +32,50 @@ Local Autonomous CUDA Optimization Agent — A closed-loop tool that uses a loca
 ---
 
 ## Key Features
-- **Closed-Loop Self-Healing**: Automatically captures NVCC compiler error logs and passes them back to the LLM to resolve syntax errors or API mismatches.
-- **Smarter Repair Loop**: Compile failures are summarized and sent back to the LLM for another repair pass before recompiling, while verification failures are routed through a separate correctness-healing path.
-- **Mathematical Correctness Validation**: Verifies that optimized kernels generate output matching the baseline kernel before comparing execution speed.
-- **Deep Profiling Integration**: Connects directly with NVIDIA Nsight Compute (`ncu`) and Nsight Systems (`nsys`) to collect exact hardware execution metrics.
-- **Structured Console Dashboard**: Visualizes execution state, live hardware metrics (CPU, RAM, GPU, VRAM usage), and code diffs in real-time with concise status updates and clearer failure states.
+- **Closed-Loop Self-Healing**: Automatically captures NVCC compiler error logs, compresses them into repair-friendly diagnostics, and sends them back to the LLM so syntax errors, missing includes, or CUDA API mismatches can be fixed without manual intervention.
+- **Separate Repair Paths**: Compilation failures and mathematical verification failures are handled differently, so the LLM repairs the correct root cause instead of trying to solve syntax and correctness in the same pass.
+- **Mathematical Correctness Validation**: Every compiled candidate is compared against the baseline output before it is treated as a valid performance result. A faster kernel that produces wrong values is rejected.
+- **Profile-Mode Control**: The optimizer supports `none`, `auto`, `auto-strict`, `auto-relaxed`, `ncu`, `nsys`, and `code`, so you can choose between strict benchmarking, relaxed fallback ranking, or direct profiler control.
+- **Deep Profiling Integration**: Connects directly with NVIDIA Nsight Compute (`ncu`) and Nsight Systems (`nsys`) to collect detailed execution data, identify hotspots, and keep the kernel optimization loop grounded in real measurements.
+- **Structured Console Dashboard**: Visualizes execution state, live hardware metrics (CPU, RAM, GPU, VRAM usage), progress, and code diffs in real time. Failure states are shown as clear status cards instead of ambiguous latency values.
+- **Mode-Aware Reporting**: Report files and dashboard summaries are separated by profile mode, so runs do not overwrite each other and benchmark history can be compared across modes.
 - **LM Studio Integration**: Interfaces directly with LM Studio's standard OpenAI-compatible API endpoint (`http://127.0.0.1:1234/v1/completions`) for fast, local, GPU-accelerated LLM reasoning without compiling local bindings.
 
 ---
 
-## Architecture & Workflow
+## Feature Behavior Guide
 
-The diagram below illustrates the closed-loop optimization and self-healing process:
+This section explains what the main sub-features actually do at runtime.
 
-![Closed-loop optimization and self-healing workflow](assets/architecture-workflow.svg)
+### Optimization Loop
+- Reads a CUDA source file or folder of files.
+- Sends the current code and environment context to the local LLM.
+- Compiles the generated kernel with NVCC.
+- Runs the result to check correctness before measuring speed.
+- Repeats the loop for the requested number of iterations.
+- Saves the best accepted candidate to the requested output path.
+
+### Self-Healing
+- If compilation fails, the error output is summarized and sent back to the LLM.
+- If the code compiles but produces incorrect results, the verification failure is routed to a correctness-focused repair prompt.
+- This keeps syntax repairs and algorithmic repairs separate.
+
+### Profile Modes
+
+| Mode | What it does | When to use |
+| :--- | :--- | :--- |
+| `none` | Skips profiler-based timing and uses a basic executable timer path. | Quick sanity checks or environments where profiler tooling is unavailable. |
+| `auto` | Chooses the best available profiler path automatically, but still treats invalid profiler output as unavailable. | General use when you want the tool to pick the profiler backend. |
+| `auto-strict` | Uses profiler data only if it is valid. If profiling cannot produce a usable result, no fake latency is shown. | Benchmarking and result comparison where accuracy matters most. |
+| `auto-relaxed` | Falls back to a timer-only value when profiler output is blocked or incomplete, but marks it as informational only. | Debugging or rough ranking when you still want a visible time estimate. |
+| `ncu` | Forces Nsight Compute profiling. | Kernel-level performance analysis and hardware counter inspection. |
+| `nsys` | Forces Nsight Systems profiling. | Timeline and system-trace analysis. |
+| `code` | Uses `cudaProfilerStart()` / `cudaProfilerStop()` inside the harness. | When you want capture controlled from inside the generated code. |
+
+### Reporting
+- `--report` writes a JSON run log for the current optimization session.
+- Report filenames are mode-aware, so `auto-strict`, `auto-relaxed`, `ncu`, and other modes do not overwrite one another.
+- The report includes the selected profile mode, best latency, original latency, per-iteration history, and regression guard details.
 
 ---
 
@@ -191,12 +221,25 @@ cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto
 | `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Runs the iterative optimization agent. Supports dry runs, folder batches, custom compilers flags, and NVTX injections. |
 | `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Performs advanced profiling on a compiled binary, identifies hotspots, runs deep NCU sweeps, and outputs LLM analyses. |
 | `audit` | `<file_or_folder>` | `--markdown`, `--recursive/--no-recursive`, `--llm-url` | Performs a static structural audit on CUDA kernels using LLM prompts. Can output reports in Markdown format. |
-| `ncu` | `<exe_path>` | `-o/--output`, `--metrics` | Direct wrapper to execute Nsight Compute, exporting performance metrics into a clean CSV file. |
-| `nsys` | `<exe_path>` | `-o/--output`, `--code` | Direct wrapper to capture execution timelines using Nsight Systems. |
+| `ncu` | `<exe_path>` | `-o/--output`, `--metrics`, `--raw`, `--timeout`, `--dry-run` | Direct wrapper to execute Nsight Compute, exporting performance metrics into a clean CSV file. Add `--raw` and put profiler options after `--` to pass them through verbatim. |
+| `nsys` | `<exe_path>` | `--command`, `-o/--output`, `--trace`, `--capture-range`, `--code`, `--raw`, `--timeout`, `--dry-run` | Direct wrapper to run Nsight Systems commands. Use `--command` for `profile`, `launch`, `start`, `stats`, `analyze`, `export`, `sessions`, `status`, `stop`, or `shutdown`. Add `--raw` and put profiler options after `--` to pass them through verbatim. |
 | `profile` | `<exe_path>` | `--mode [auto\|ncu\|nsys]`, `--metrics`, `--code` | Runs either NCU or NSYS based on availability. |
 | `help` | None | None | Prints the plain text command reference page. |
 
 ---
+
+## Direct Shell Integration
+
+The `ncu` and `nsys` commands can now be used as thin shell wrappers around the NVIDIA tools. Use `--raw` when you want the underlying profiler options to be passed through unchanged.
+
+Examples:
+```powershell
+cudallm ncu .\my_kernel.exe --raw -- --set full --section SpeedOfLight --page raw
+cudallm nsys --command status
+cudallm nsys .\my_kernel.exe --code --raw -- --trace cuda,nvtx --capture-range=cudaProfilerApi
+```
+
+For `nsys`, `--command` selects the NVIDIA subcommand directly. Use profile-style commands for timeline captures and non-profile commands for session/status/analyze/export workflows.
 
 ## Advanced Core Workflows
 
