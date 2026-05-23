@@ -291,6 +291,22 @@ Example command:
 cudallm agent --instruction "Compile examples/vector_add.cu and profile it with nsys and ncu"
 ```
 
+#### Hybrid Dual-Model Routing Setup
+
+The system supports running a **Hybrid Dual-Model Setup** by loading both models concurrently in LM Studio on the exact same port (e.g. `1234`). The system will automatically route requests based on keyword matching:
+
+* **Orchestrator/Agent Model (`cudallm agent`)**: Target model is **`Qwen2.5-3B-Instruct-GGUF`** (auto-selects any loaded model containing `qwen`, `llama`, or `instruct`).
+* **Kernel Optimizer Model (`cudallm optimize`)**: Target model is **`cudaLLM-8B-GGUF`** (auto-selects any loaded model containing `cuda`, `llm`, or `coder`).
+
+To explicitly define model names, configure them in `config/config.json`:
+```json
+{
+  "llm_url": "http://127.0.0.1:1234/v1/completions",
+  "llm_model_name": "cudaLLM-8B",
+  "agent_llm_model_name": "qwen2.5-3b-instruct"
+}
+```
+
 ---
 
 ## Connection Configuration & Probing
