@@ -983,7 +983,8 @@ def check():
 @click.option('--llm-api-key', envvar='LLM_API_KEY', default=None, help='Override the LLM API key')
 @click.option('--llm-api-key-file', envvar='LLM_API_KEY_FILE', default=None, type=click.Path(exists=True, dir_okay=False), help='Override the LLM API key file path')
 @click.option('--insecure', is_flag=True, help='Bypass HTTPS/TLS verification and allow insecure remote HTTP connections')
-def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure):
+@click.option('--interactive', '-i', is_flag=True, help='Interactive mode: keep agent alive for follow-up questions')
+def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure, interactive):
     """Run LangChain-based autonomous performance engineering agent."""
     locate_and_setup_msvc()
     from .langchain_agent import create_agent_with_llmclient
@@ -1004,10 +1005,14 @@ def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure):
     llm_client = create_llm_client(config)
     
     from .health_check import check_llm_health
-    ok, msg = check_llm_health(config.get('llm_url'))
+    try:
+        ok, msg = check_llm_health(config.get('llm_url'))
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Cancelled by user (KeyboardInterrupt).[/bold red]")
+        sys.exit(1)
+        
     if not ok:
         if "HTTPConnectionPool" in msg or "ConnectionRefusedError" in msg or "Max retries exceeded" in msg or "refused" in msg:
-            from rich.panel import Panel
             guide_text = (
                 "[bold red]Could not connect to the local LLM server (LM Studio).[/bold red]\n\n"
                 "[bold white]Please start LM Studio manually following these steps:[/bold white]\n"
@@ -1023,10 +1028,239 @@ def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure):
         sys.exit(1)
         
     console.print(f"[bold green]Starting LangChain Agent with instruction:[/bold green] '{instruction}'")
-    agent_graph = create_agent_with_llmclient(llm_client)
-    res = agent_graph.invoke({"messages": [("user", instruction)]})
-    response = res["messages"][-1].content
-    console.print("\n[bold green]Agent response:[/bold green]\n", response)
+    try:
+        agent_graph = create_agent_with_llmclient(llm_client)
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Cancelled by user (KeyboardInterrupt).[/bold red]")
+        sys.exit(1)
+    
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
+    final_response = ""
+    conversation_history = []
+    
+    try:
+        for event in agent_graph.stream({"messages": [("user", instruction)]}, stream_mode="updates"):
+            for node_name, node_update in event.items():
+                if node_name == "model":
+                    messages = node_update.get("messages", [])
+                    for msg in messages:
+                        if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                            u = msg.usage_metadata
+                            p_tok = u.get("input_tokens", 0)
+                            c_tok = u.get("output_tokens", 0)
+                            t_tok = u.get("total_tokens", 0)
+                            total_prompt_tokens += p_tok
+                            total_completion_tokens += c_tok
+                            total_tokens += t_tok
+                            console.print(f"[dim cyan][LLM Tokens] Input: {p_tok} | Output: {c_tok} | Cumulative Total: {total_tokens}[/dim cyan]")
+                        
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                console.print(f"[bold yellow]> Calling tool:[/bold yellow] [bold cyan]{tc['name']}[/bold cyan] with args: [bold]{json.dumps(tc['args'])}[/bold]")
+                        
+                        if msg.content:
+                            final_response = msg.content
+                elif node_name == "tools":
+                    messages = node_update.get("messages", [])
+                    for msg in messages:
+                        tool_name = getattr(msg, "name", "unknown_tool")
+                        tool_output = msg.content
+                        console.print(f"[bold green]* Tool finished:[/bold green] [bold cyan]{tool_name}[/bold cyan]")
+                        if tool_output:
+                            try:
+                                parsed = json.loads(tool_output)
+                                if isinstance(parsed, dict):
+                                    if "stdout" in parsed or "stderr" in parsed:
+                                        stdout_lines = parsed.get("stdout", "").strip().splitlines()
+                                        stderr_lines = parsed.get("stderr", "").strip().splitlines()
+                                        summary_parts = []
+                                        if stdout_lines:
+                                            summary_parts.append("[bold]Stdout (last 3 lines):[/bold]\n" + "\n".join(stdout_lines[-3:]))
+                                        if stderr_lines:
+                                            summary_parts.append("[bold red]Stderr (last 3 lines):[/bold red]\n" + "\n".join(stderr_lines[-3:]))
+                                        formatted_out = "\n".join(summary_parts) if summary_parts else "(no output)"
+                                    elif "out" in parsed and "csv" in parsed:
+                                        ncu_lines = [l for l in parsed["out"].strip().splitlines() if l.strip()]
+                                        lines_out = []
+                                        for l in ncu_lines:
+                                            if "==ERROR==" in l:
+                                                lines_out.append(f"[bold red]{l}[/bold red]")
+                                            elif "==WARNING==" in l:
+                                                lines_out.append(f"[yellow]{l}[/yellow]")
+                                            elif "==PROF==" in l:
+                                                lines_out.append(f"[dim]{l}[/dim]")
+                                            else:
+                                                lines_out.append(l)
+                                        lines_out.append(f"[dim]Report: {parsed.get('basename', '')}[/dim]")
+                                        formatted_out = "\n".join(lines_out) if lines_out else "(no profiler output)"
+                                    elif "error" in parsed:
+                                        formatted_out = f"[bold red]Error:[/bold red] {parsed['error']}"
+                                    elif "status" in parsed or "report" in parsed:
+                                        status = parsed.get('status', '')
+                                        report = parsed.get('report', parsed.get('message', ''))
+                                        color = "green" if status == "Clean" else "yellow"
+                                        formatted_out = f"[bold {color}]Status: {status}[/bold {color}]\n{report}"
+                                    else:
+                                        lines_out = [f"[cyan]{k}:[/cyan] {v}" for k, v in parsed.items()]
+                                        formatted_out = "\n".join(lines_out)
+                                else:
+                                    formatted_out = str(tool_output)
+                            except Exception:
+                                formatted_out = str(tool_output)
+
+                            if len(formatted_out) > 800:
+                                formatted_out = formatted_out[:800] + "\n[dim]... (truncated)[/dim]"
+                            console.print(Panel(Text.from_markup(formatted_out), title=f"[bold]{tool_name}[/bold]", border_style="cyan", box=box.ROUNDED))
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Agent execution cancelled by user (KeyboardInterrupt).[/bold red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[bold red]Error during agent execution: {e}[/bold red]")
+
+    if final_response:
+        try:
+            md = Markdown(final_response.strip())
+            console.print(Panel(
+                md,
+                title="[bold green]Agent Response[/bold green]",
+                border_style="green",
+                box=box.ROUNDED,
+                padding=(1, 2),
+            ))
+        except Exception:
+            console.print(Panel(
+                final_response.strip(),
+                title="[bold green]Agent Response[/bold green]",
+                border_style="green",
+                box=box.ROUNDED,
+                padding=(1, 2),
+            ))
+    if total_tokens > 0:
+        console.print(Panel(
+            f"[bold cyan]Prompt Tokens:[/bold cyan] {total_prompt_tokens}\n"
+            f"[bold cyan]Completion Tokens:[/bold cyan] {total_completion_tokens}\n"
+            f"[bold green]Total Tokens Used:[/bold green] {total_tokens}",
+            title="Total LLM Session Usage Summary",
+            border_style="cyan"
+        ))
+    
+
+    if interactive:
+        conversation_history = [("user", instruction), ("assistant", final_response)]
+        console.print("\n[bold yellow]Interactive mode enabled. Type 'exit' or 'quit' to stop.[/bold yellow]")
+        
+        while True:
+            try:
+                user_input = console.input("\n[bold cyan]You:[/bold cyan] ")
+                if not user_input.strip():
+                    continue
+                if user_input.strip().lower() in ('exit', 'quit'):
+                    console.print("[bold green]Exiting interactive mode.[/bold green]")
+                    break
+                
+                final_response = ""
+                console.print(f"[bold green]Processing:[/bold green] '{user_input}'")
+                
+                for event in agent_graph.stream({"messages": conversation_history + [("user", user_input)]}, stream_mode="updates"):
+                    for node_name, node_update in event.items():
+                        if node_name == "model":
+                            messages = node_update.get("messages", [])
+                            for msg in messages:
+                                if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                                    u = msg.usage_metadata
+                                    p_tok = u.get("input_tokens", 0)
+                                    c_tok = u.get("output_tokens", 0)
+                                    t_tok = u.get("total_tokens", 0)
+                                    total_prompt_tokens += p_tok
+                                    total_completion_tokens += c_tok
+                                    total_tokens += t_tok
+                                    console.print(f"[dim cyan][LLM Tokens] Input: {p_tok} | Output: {c_tok} | Cumulative Total: {total_tokens}[/dim cyan]")
+                                
+                                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                    for tc in msg.tool_calls:
+                                        console.print(f"[bold yellow]> Calling tool:[/bold yellow] [bold cyan]{tc['name']}[/bold cyan] with args: [bold]{json.dumps(tc['args'])}[/bold]")
+                                
+                                if msg.content:
+                                    final_response = msg.content
+                        elif node_name == "tools":
+                            messages = node_update.get("messages", [])
+                            for msg in messages:
+                                tool_name = getattr(msg, "name", "unknown_tool")
+                                tool_output = msg.content
+                                console.print(f"[bold green]* Tool finished:[/bold green] [bold cyan]{tool_name}[/bold cyan]")
+                                if tool_output:
+                                    try:
+                                        parsed = json.loads(tool_output)
+                                        if isinstance(parsed, dict):
+                                            if "stdout" in parsed or "stderr" in parsed:
+                                                stdout_lines = parsed.get("stdout", "").strip().splitlines()
+                                                stderr_lines = parsed.get("stderr", "").strip().splitlines()
+                                                summary_parts = []
+                                                if stdout_lines:
+                                                    summary_parts.append("[bold]Stdout (last 3 lines):[/bold]\n" + "\n".join(stdout_lines[-3:]))
+                                                if stderr_lines:
+                                                    summary_parts.append("[bold red]Stderr (last 3 lines):[/bold red]\n" + "\n".join(stderr_lines[-3:]))
+                                                formatted_out = "\n".join(summary_parts) if summary_parts else "(no output)"
+                                            elif "out" in parsed and "csv" in parsed:
+                                                ncu_lines = [l for l in parsed["out"].strip().splitlines() if l.strip()]
+                                                lines_out = []
+                                                for l in ncu_lines:
+                                                    if "==ERROR==" in l:
+                                                        lines_out.append(f"[bold red]{l}[/bold red]")
+                                                    elif "==WARNING==" in l:
+                                                        lines_out.append(f"[yellow]{l}[/yellow]")
+                                                    elif "==PROF==" in l:
+                                                        lines_out.append(f"[dim]{l}[/dim]")
+                                                    else:
+                                                        lines_out.append(l)
+                                                lines_out.append(f"[dim]Report: {parsed.get('basename', '')}[/dim]")
+                                                formatted_out = "\n".join(lines_out) if lines_out else "(no profiler output)"
+                                            elif "error" in parsed:
+                                                formatted_out = f"[bold red]Error:[/bold red] {parsed['error']}"
+                                            elif "status" in parsed or "report" in parsed:
+                                                status = parsed.get('status', '')
+                                                report = parsed.get('report', parsed.get('message', ''))
+                                                color = "green" if status == "Clean" else "yellow"
+                                                formatted_out = f"[bold {color}]Status: {status}[/bold {color}]\n{report}"
+                                            else:
+                                                lines_out = [f"[cyan]{k}:[/cyan] {v}" for k, v in parsed.items()]
+                                                formatted_out = "\n".join(lines_out)
+                                        else:
+                                            formatted_out = str(tool_output)
+                                    except Exception:
+                                        formatted_out = str(tool_output)
+
+                                    if len(formatted_out) > 800:
+                                        formatted_out = formatted_out[:800] + "\n[dim]... (truncated)[/dim]"
+                                    console.print(Panel(Text.from_markup(formatted_out), title=f"[bold]{tool_name}[/bold]", border_style="cyan", box=box.ROUNDED))
+                
+                if final_response:
+                    try:
+                        md = Markdown(final_response.strip())
+                        console.print(Panel(
+                            md,
+                            title="[bold green]Agent Response[/bold green]",
+                            border_style="green",
+                            box=box.ROUNDED,
+                            padding=(1, 2),
+                        ))
+                    except Exception:
+                        console.print(Panel(
+                            final_response.strip(),
+                            title="[bold green]Agent Response[/bold green]",
+                            border_style="green",
+                            box=box.ROUNDED,
+                            padding=(1, 2),
+                        ))
+                
+                conversation_history.append(("user", user_input))
+                conversation_history.append(("assistant", final_response))
+                
+            except KeyboardInterrupt:
+                console.print("\n[bold green]Exiting interactive mode.[/bold green]")
+                break
 
 
 @main.command()
