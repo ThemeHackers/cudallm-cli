@@ -43,6 +43,7 @@ def build_nsys_command(nsys_bin, exe=None, output_base=None, trace=None, capture
     cmd.extend(_normalize_extra_args(extra_args))
     return cmd
 
+
 def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
     nsys = None
     try:
@@ -63,6 +64,7 @@ def run_nsys(exe, output_base='nsys_expert', code=False, timeout=900):
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     out = res.stdout + res.stderr
     return {"out": out, "basename": output_base, "command": cmd}
+
 
 def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600, extra_args=None):
     from .discover import find_ncu_path, find_ncu_sections_path
@@ -102,6 +104,7 @@ def run_ncu_broad(exe, output_base=None, metrics=None, timeout=600, extra_args=N
             pass
 
     return {"out": out, "csv": csv_path, "basename": base, "command": cmd}
+
 
 def parse_ncu_csv_for_hotspot(csv_path, target_metric=None):
     if not os.path.exists(csv_path):
@@ -173,6 +176,7 @@ def parse_ncu_csv_for_hotspot(csv_path, target_metric=None):
             return {"kernel": best, "value": best_val, "name_idx": name_idx, "time_idx": time_idx}
     except Exception:
         return None
+
 
 def summarize_profile_outputs(nsys_out, ncu_csv_path, max_lines=200):
     parts = []

@@ -530,177 +530,79 @@ def render_environment_summary(title="Local CUDA Environment Status"):
     console.print(table)
 
 
-def print_cli_help():
-    help_text = """Local CUDA performance engineering and AI optimization tools.
+def print_cli_help(command_name=None):
+    table = Table(title="Command -> Output", box=box.SIMPLE_HEAVY)
+    table.add_column("Command", style="cyan", no_wrap=True)
+    table.add_column("Output", style="white")
 
-Commands
---------
-cudallm init
-    Inspect local GPU hardware, CUDA toolchain paths, Nsight tools, and config.
+    for command, output in [
+        ("init", "Inspect GPU/CUDA/Nsight setup"),
+        ("doctor", "Same as `init`"),
+        ("check", "Alias for `doctor`"),
+        ("setup-gpu", "Verify readiness for CUDA builds"),
+        ("serve", "Check or configure the local LLM server (--allow-unsafe-network, --llm-api-key-file)"),
+        ("agent", "Run the LangChain agent"),
+        ("dashboard", "Launch the web dashboard"),
+        ("sandbox-run", "Run a command in Docker sandbox"),
+        ("optimize", "LLM loop: compile, profile, verify, heal"),
+        ("expert", "NSYS -> NCU hotspot workflow"),
+        ("audit", "Static CUDA audit and report"),
+        ("ncu", "Run Nsight Compute"),
+        ("nsys", "Run Nsight Systems"),
+        ("profile", "Auto-pick ncu or nsys"),
+        ("help", "Show help for a command"),
+    ]:
+        table.add_row(f"cudallm {command}", output)
 
-cudallm doctor
-    Show the same environment summary as init.
+    console.print("Local CUDA performance engineering and AI optimization tools.")
+    console.print(table)
 
-cudallm check
-    Alias for doctor.
+    if not command_name:
+        console.print()
+        console.print("Use `cudallm help <command>` for focused usage.")
+        console.print("See README.md for deep workflow details and longer examples.")
+        console.print()
+        console.print("Short examples")
+        console.print("--------------")
+        console.print("cudallm optimize examples/vector_add.cu --iters 3 --profile-mode auto --nvtx")
+        console.print("cudallm expert ./temp_cuda_kernel.exe --auto-nvtx --rerun")
+        return
 
-cudallm setup-gpu
-    Verify environment readiness for GPU kernel compiling.
+    focused = {
+        "optimize": [
+            "Optimize a CUDA file or folder with compile/profile/verify/heal loops.",
+            "Short example: cudallm optimize examples/vector_add.cu --iters 3 --profile-mode auto --nvtx",
+            "Outputs: optimized code, optional JSON report, profiler data, and iteration history.",
+        ],
+        "expert": [
+            "Run an expert profiling pass: NSYS for app-level context, then NCU for kernel hotspots.",
+            "Short example: cudallm expert ./temp_cuda_kernel.exe --auto-nvtx --rerun",
+            "Outputs: NSYS report, NCU CSV, hotspot summary, and optional NVTX guidance.",
+        ],
+        "ncu": [
+            "Run Nsight Compute against an executable and export CSV output.",
+            "Use `--raw` and put extra profiler args after `--` to pass them through verbatim.",
+            "Outputs: NCU CSV plus profiler stdout/stderr.",
+        ],
+        "nsys": [
+            "Run Nsight Systems commands directly, including profile/start/stats/analyze/export.",
+            "Use `--raw` and put extra profiler args after `--` to pass them through verbatim.",
+            "Outputs: NSYS report basename and command output.",
+        ],
+        "profile": [
+            "Auto-select `ncu` or `nsys` depending on what is installed.",
+            "Outputs: whichever profiler backend is available for the executable.",
+        ],
+        "agent": [
+            "Run the LangChain-based autonomous performance engineer.",
+            "Outputs: tool calls, reasoning trace, and final response from the agent.",
+        ],
+    }
 
-cudallm serve [options]
-    Check LM Studio connection status or display startup instructions.
+    console.print()
+    for line in focused.get(command_name, [f"No focused help available for '{command_name}'."]):
+        console.print(line)
 
-cudallm agent [options]
-    Run LangChain-based autonomous performance engineering agent.
-
-cudallm dashboard [options]
-    Start the CUDA LLM Optimizer Web Dashboard.
-
-cudallm sandbox-run [options]
-    Run a command inside a Docker sandbox container.
-
-cudallm optimize <file|folder> [options]
-    Run the optimization loop: prompt the LLM, compile, profile, verify, and heal.
-
-cudallm expert <exe> [options]
-    Run NSYS -> NCU hotspot analysis, optional NVTX generation, and reruns.
-
-cudallm audit <file|folder> [options]
-    Perform static CUDA audits and export markdown reports.
-
-cudallm ncu <exe> [options]
-    Run Nsight Compute and export a CSV report.
-    Use --raw and place profiler options after -- to pass them through verbatim.
-
-cudallm nsys <exe> [options]
-    Run Nsight Systems commands directly.
-    Use --command to select profile/start/stats/analyze/export/sessions/status/stop/shutdown.
-    Use --raw and place profiler options after -- to pass them through verbatim.
-
-cudallm profile <exe> [options]
-    Auto-select ncu or nsys depending on what is available.
-
-cudallm help
-    Print this page.
-
-Useful flags
-------------
-setup-gpu:
-    --dry-run        Show the checks without executing any remediation.
-    --force-reinstall Ignored/deprecated compatibility flag.
-
-serve:
-    --port           LM Studio port (default 1234).
-    --host           Host/interface to probe.
-    --public-url     Public client endpoint to store in config.
-    --api-key        API key to store in config.
-    --api-key-file   File containing one or more API keys.
-    --ssl-key-file   PEM private key for HTTPS.
-    --ssl-cert-file  PEM certificate for HTTPS.
-    --allow-unsafe-network Allow server access without API key/TLS.
-    --reuse-port     Allow multiple sockets to bind to the same port.
-    --repo           HuggingFace repository name for compatibility.
-    --file           GGUF file name. Default: cudaLLM-8B.Q4_K_M.gguf.
-    --local-model    Local model path.
-    --use-cuda       Enable CUDA for the Python backend.
-    --ngl            Deprecated compatibility flag.
-    --ctx            Deprecated compatibility flag.
-    --parallel       Deprecated compatibility flag.
-    --no-update      Deprecated compatibility flag.
-
-agent:
-    --instruction    Instruction for the LangChain agent.
-    --llm-url        Override the LLM backend URL.
-    --llm-api-key    Override the LLM API key.
-    --llm-api-key-file Override the LLM API key file.
-    --insecure       Disable TLS verification for remote HTTP backends.
-
-optimize:
-    --output         Output path for optimized code.
-    --iters          Number of optimization iterations.
-    --target         Optimization target metric.
-    --retries        Retry count for healing loops.
-    --fast-math      Inject -use_fast_math into compilation.
-    --opt-level      NVCC optimization level.
-    --report         Emit an optimization report.
-    --recursive/--no-recursive Recurse into subfolders when optimizing a directory.
-    --dry-run        Show the planned flow without compiling or profiling.
-    --nvtx           Inject NVTX ranges into the generated harness.
-    --apply-nvtx     Apply an NVTX suggestion file during compilation.
-    --ncu-metrics    Comma-separated Nsight Compute metrics.
-    --profile-mode   Choose none, auto, auto-strict, auto-relaxed, ncu, nsys, or code.
-    --llm-url        Override the LLM backend URL.
-    --llm-api-key    Override the LLM API key.
-    --llm-api-key-file Override the LLM API key file.
-    --insecure       Disable TLS verification for remote HTTP backends.
-
-expert:
-    --metrics        Comma-separated Nsight Compute metrics for the broad sweep.
-    --run-deep       Run a follow-up deep NCU collection.
-    --code           Use cudaProfilerApi capture range for NSYS.
-    --auto-nvtx      Ask the LLM for NVTX insertion suggestions.
-    --rerun          Re-run profiling after NVTX suggestions are generated.
-    --dry-run        Show the planned expert flow without running profilers.
-    --llm-url        Override the LLM backend URL.
-    --llm-api-key    Override the LLM API key.
-    --llm-api-key-file Override the LLM API key file.
-    --insecure       Disable TLS verification for remote HTTP backends.
-
-audit:
-    --markdown       Write markdown reports instead of printing only.
-    --recursive/--no-recursive Recurse into subfolders when auditing a directory.
-    --llm-url        Override the LLM backend URL.
-    --llm-api-key    Override the LLM API key.
-    --llm-api-key-file Override the LLM API key file.
-    --insecure       Disable TLS verification for remote HTTP backends.
-
-ncu:
-    --metrics        Comma-separated Nsight Compute metrics.
-    --output         Output basename for the CSV/report.
-    --raw            Bypass wrapper defaults and pass raw profiler options after --.
-    --timeout        Timeout in seconds.
-    --dry-run        Print the exact command without running it.
-
-nsys:
-    --output         Output basename for the report.
-    --command        Select profile, launch, start, stats, analyze, export, sessions, status, stop, or shutdown.
-    --trace          Trace set for profile-style commands.
-    --capture-range  Capture range for profile-style commands.
-    --code           Use cudaProfilerApi capture range.
-    --raw            Bypass wrapper defaults and pass raw profiler options after --.
-    --timeout        Timeout in seconds.
-    --dry-run        Print the exact command without running it.
-
-profile:
-    --mode           Choose auto, ncu, or nsys.
-    --metrics        Nsight Compute metrics when using ncu.
-    --code           Use cudaProfilerApi capture range for nsys.
-
-dashboard:
-    --port           Port to run the dashboard server on (default 8000).
-
-sandbox-run:
-    --image          Docker image to use.
-    --cmd            Command to run inside the container.
-    --mount          Volume mount in host:container form (repeatable).
-    --workdir        Working directory inside the container.
-    --mount-cwd/--no-mount-cwd Mount the current directory into the container.
-    --timeout        Timeout in seconds.
-    --mem-limit-mb   Optional memory limit in MB.
-
-Examples
---------
-cudallm init
-cudallm doctor
-cudallm optimize path/to/kernel.cu --iters 3 --profile-mode auto --nvtx
-cudallm optimize path/to/kernel.cu --dry-run
-cudallm expert ./temp_cuda_kernel.exe --auto-nvtx --rerun
-cudallm serve --repo prithivMLmods/cudaLLM-8B-GGUF --file cudaLLM-8B.Q4_K_M.gguf --ngl 24
-cudallm agent --instruction "Profile examples/vector_add.cu with ncu"
-cudallm dashboard --port 8000
-cudallm sandbox-run --image nvidia/cuda:12.2.0-devel-ubuntu22.04 --cmd "nvcc --version"
-"""
-    console.print(help_text)
 
 def optimize_single_file(input_file, output, iters, target, retries, fast_math, opt_level, report, llm, env_info, profile_mode='none', use_nvtx=False, ncu_metrics='', apply_nvtx=False):
     import uuid
@@ -1416,11 +1318,12 @@ def optimize(input_file, output, iters, target, retries, fast_math, opt_level, r
     )
 
 @main.command()
-def help():
+@click.argument('command_name', required=False)
+def help(command_name):
     """
     Display plain text help guide for cudallm CLI tool.
     """
-    print_cli_help()
+    print_cli_help(command_name)
 
 
 @main.command(name='sandbox-run')

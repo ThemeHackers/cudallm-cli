@@ -254,26 +254,44 @@ Optimize a target CUDA kernel using the default 3-iteration self-healing loop:
 cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto --nvtx
 ```
 
+If you want profiling output plus an LLM-ready explanation payload, use the same command with `--report` and a profiler mode such as `ncu` or `nsys`:
+```powershell
+cudallm optimize examples/vector_add.cu -o optimized/vector_add.cu --iters 1 --profile-mode ncu --nvtx --report
+```
+
 ---
 
 ## Detailed Command Reference
 
+Use `cudallm help <command>` for short command-specific usage. Keep the detailed behavior notes below.
+
 | Command | Arguments | Options | Description |
 | :--- | :--- | :--- | :--- |
-| `init` | None | None | Scans system paths, locates compiler/profiler executables, and persists configuration. |
-| `doctor` / `check` | None | None | Displays a clean summary table of discovered paths and GPU capability. |
-| `setup-gpu` | None | `--dry-run`, `--force-reinstall` | Verifies environment readiness for GPU kernel compiling. Bypasses llama-cpp-python installation. |
-| `serve` | None | `--host`, `--port`, `--public-url`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--allow-unsafe-network`, `--reuse-port` | Checks LM Studio connection status or displays startup instructions. |
-| `agent` | None | `--instruction`, `--llm-url`, `--llm-api-key`, `--llm-api-key-file`, `--insecure` | Runs the LangChain-based autonomous performance engineering agent. |
-| `dashboard` | None | `--host`, `--port` | Start the CUDA LLM Optimizer Web Dashboard. |
-| `sandbox-run` | None | `--image`, `--cmd`, `--mount`, `--workdir`, `--mount-cwd/--no-mount-cwd`, `--timeout`, `--mem-limit-mb` | Run a command inside a Docker sandbox container. |
-| `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Runs the iterative optimization agent. Supports dry runs, folder batches, custom compilers flags, and NVTX injections. |
-| `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Performs advanced profiling on a compiled binary, identifies hotspots, runs deep NCU sweeps, and outputs LLM analyses. |
-| `audit` | `<file_or_folder>` | `--markdown`, `--recursive/--no-recursive`, `--llm-url` | Performs a static structural audit on CUDA kernels using LLM prompts. Can output reports in Markdown format. |
-| `ncu` | `<exe_path>` | `-o/--output`, `--metrics`, `--raw`, `--timeout`, `--dry-run` | Direct wrapper to execute Nsight Compute, exporting performance metrics into a clean CSV file. Add `--raw` and put profiler options after `--` to pass them through verbatim. |
-| `nsys` | `<exe_path>` | `--command`, `-o/--output`, `--trace`, `--capture-range`, `--code`, `--raw`, `--timeout`, `--dry-run` | Direct wrapper to run Nsight Systems commands. Use `--command` for `profile`, `launch`, `start`, `stats`, `analyze`, `export`, `sessions`, `status`, `stop`, or `shutdown`. Add `--raw` and put profiler options after `--` to pass them through verbatim. |
-| `profile` | `<exe_path>` | `--mode [auto\|ncu\|nsys]`, `--metrics`, `--code` | Runs either NCU or NSYS based on availability. |
-| `help` | None | None | Prints the plain text command reference page. |
+| `init` | None | None | Discover tools and save config. |
+| `doctor` / `check` | None | None | Show discovered paths and GPU status. |
+| `setup-gpu` | None | `--dry-run`, `--force-reinstall` | Verify GPU build readiness. |
+| `serve` | None | `--host`, `--port`, `--public-url`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--allow-unsafe-network`, `--reuse-port` | Check or start the local LLM server. |
+| `agent` | None | `--instruction`, `--llm-url`, `--llm-api-key`, `--llm-api-key-file`, `--insecure` | Run the LangChain agent. |
+| `dashboard` | None | `--host`, `--port` | Launch the dashboard. |
+| `sandbox-run` | None | `--image`, `--cmd`, `--mount`, `--workdir`, `--mount-cwd/--no-mount-cwd`, `--timeout`, `--mem-limit-mb` | Run a command in Docker. |
+| `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Optimize CUDA code in a loop. |
+| `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Run the nsys -> ncu expert workflow. |
+| `audit` | `<file_or_folder>` | `--markdown`, `--recursive/--no-recursive`, `--llm-url` | Perform a static CUDA audit. |
+| `ncu` | `<exe_path>` | `-o/--output`, `--metrics`, `--raw`, `--timeout`, `--dry-run` | Run Nsight Compute directly. |
+| `nsys` | `<exe_path>` | `--command`, `-o/--output`, `--trace`, `--capture-range`, `--code`, `--raw`, `--timeout`, `--dry-run` | Run Nsight Systems directly. |
+| `profile` | `<exe_path>` | `--mode [auto\|ncu\|nsys]`, `--metrics`, `--code` | Pick the available profiler automatically. |
+| `help` | None | None | Show command help. |
+
+### Profiling Output Fields
+
+When `cudallm optimize --report` runs with `ncu`, `nsys`, or `auto`-family profile modes, the generated report can include these extra fields:
+
+- `explanation`: Structured diagnosis from the profiling outputs.
+- `action_hints`: Short actionable recommendations for the next optimization pass.
+- `suggested_prompt`: A ready-to-send prompt for the LLM, generated from the detected issue class.
+- `nsys_nvtx_ranges`: Detected NVTX ranges inferred from the NSYS output.
+- `ncu_nvtx_targeted`: Targeted NCU sweeps run for each detected NVTX range.
+- `reward`: Combined ranking score used to compare candidates.
 
 ---
 
@@ -317,6 +335,8 @@ The `cudallm expert` command profiles a pre-compiled CUDA binary, identifies bot
 3. **Hotspot Analysis**: Parses the output CSV to locate the kernel with the highest execution bottleneck.
 4. **Deep Collection Recommendations**: Recommends a targeted `ncu` command for the specific hotspot kernel.
 5. **Auto NVTX Suggestions**: Query the LLM with the profiling logs to automatically generate an `nvtx_suggestion.cu` instrumented file.
+6. **Prompt Templates**: Builds issue-specific LLM prompts for memory-bound, compute-bound, and synchronization-bound cases.
+7. **NVTX-Targeted Sweeps**: If NVTX ranges are detected, the pipeline can re-run `ncu` on those ranges for focused analysis.
 
 Example command:
 ```powershell
