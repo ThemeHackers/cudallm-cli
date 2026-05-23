@@ -342,10 +342,16 @@ cudallm agent --instruction "Compile examples/vector_add.cu and profile it with 
 
 #### Hybrid Dual-Model Routing Setup
 
-The system supports running a **Hybrid Dual-Model Setup** by loading both models concurrently in LM Studio on the exact same port (e.g. `1234`). The system will automatically route requests based on keyword matching:
+The system is designed around a **Hybrid Dual-Model Setup** to balance reasoning capabilities and CUDA-specific knowledge. You can load both models concurrently (e.g., in LM Studio on the exact same port `1234`), and the system will automatically route requests based on keyword matching:
 
-* **Orchestrator/Agent Model (`cudallm agent`)**: Target model is **`Qwen2.5-3B-Instruct-GGUF`** (auto-selects any loaded model containing `qwen`, `llama`, or `instruct`).
-* **Kernel Optimizer Model (`cudallm optimize`)**: Target model is **`cudaLLM-8B-GGUF`** (auto-selects any loaded model containing `cuda`, `llm`, or `coder`).
+* **Kernel Optimizer Model (`cudallm optimize`)**: Optimized for generating and repairing CUDA code.
+  - **Recommended Model**: **`cudaLLM-8B-GGUF`**.
+  - **Alternative Models**: You can use other CUDA code models available on the [cudaLLM Hugging Face Repository](https://huggingface.co/prithivMLmods/cudaLLM-8B-GGUF). The system auto-selects any loaded model containing `cuda`, `llm`, or `coder`.
+* **Orchestrator/Agent Model (`cudallm agent`)**: Handles the high-level orchestration, decision-making, and tool utilization.
+  - **Recommended Model**: **`qwen2.5-3b-instruct`**.
+  - **Flexibility**: The orchestrator model is **not strictly fixed** and can be scaled up or down depending on your local machine resources.
+  - > [!IMPORTANT]
+    > The selected Agent model **must support tool calling (function calling)** natively to work with the system's low-level GPU tool bindings.
 
 To explicitly define model names, configure them in `config/config.json`:
 ```json
