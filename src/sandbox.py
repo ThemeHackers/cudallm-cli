@@ -470,7 +470,7 @@ int main(int argc, char** argv) {{
         if os.name == 'nt' and "-allow-unsupported-compiler" not in cmd:
             cmd.append("-allow-unsupported-compiler")
 
-        # On Windows, inject cl.exe directory into PATH so nvcc can find the host compiler
+     
         compile_env = None
         if os.name == 'nt':
             cl_dir = find_cl_exe_dir()
@@ -635,10 +635,17 @@ int main(int argc, char** argv) {{
                 sections_path = find_ncu_sections_path(binpath)
                 if sections_path:
                     cmd.extend(['--section-folder', sections_path])
-                # Add kernel profiling section to ensure kernels are captured
-                cmd.extend(['--set', 'full', '--section', 'SpeedOfLight'])
-                if self.profile_metrics:
-                    cmd.extend(['--metrics', self.profile_metrics])
+              
+                BASELINE_METRICS = (
+                    "gpu__time_duration.sum,"
+                    "sm__throughput.avg.pct_of_peak_sustained_elapsed,"
+                    "dram__throughput.avg.pct_of_peak_sustained_elapsed,"
+                    "sm__warps_active.avg.pct_of_peak_sustained_active,"
+                    "l1tex__t_bytes.sum,"
+                    "l2__t_bytes.sum"
+                )
+                effective_metrics = self.profile_metrics if self.profile_metrics else BASELINE_METRICS
+                cmd.extend(['--metrics', effective_metrics])
                 cmd.extend(['--csv', '-o', base, self.exe_path])
                 cmd.extend(args)
                 try:
@@ -648,7 +655,16 @@ int main(int argc, char** argv) {{
                     cmd2 = [binpath]
                     if sections_path:
                         cmd2.extend(['--section-folder', sections_path])
-                    cmd2.extend(['--set', 'full', '--section', 'SpeedOfLight'])
+                    BASELINE_METRICS = (
+                        "gpu__time_duration.sum,"
+                        "sm__throughput.avg.pct_of_peak_sustained_elapsed,"
+                        "dram__throughput.avg.pct_of_peak_sustained_elapsed,"
+                        "sm__warps_active.avg.pct_of_peak_sustained_active,"
+                        "l1tex__t_bytes.sum,"
+                        "l2__t_bytes.sum"
+                    )
+                    effective_metrics = self.profile_metrics if self.profile_metrics else BASELINE_METRICS
+                    cmd2.extend(['--metrics', effective_metrics])
                     cmd2.extend([self.exe_path] + args)
                     result = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     output = result.stdout + result.stderr
