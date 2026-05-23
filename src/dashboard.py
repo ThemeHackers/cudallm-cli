@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import secrets
 import threading
 import time
 import urllib.parse
@@ -22,13 +23,33 @@ from .discover import check_environment, find_nvcc_path, find_ncu_path, find_nsy
 from .cli import load_config, create_llm_client, collect_cuda_files
 from .sandbox import CUDASandbox
 from .roofline import RooflineAnalyzer
+from .network_security import load_dotenv_file, is_private_network_host
 from . import platform_info
+
+load_dotenv_file()
 
 
 PROFILING_FAILURE_LATENCY = 99999.0
 BENCHMARK_HISTORY_LIMIT = 25
 BENCHMARK_HISTORY_PATH = os.path.join(str(platform_info.get_config_dir()), "benchmark_history.json")
 MAX_LIVE_SERIES_POINTS = 240
+STORE_CODE_HISTORY = os.environ.get("CUDALLM_STORE_CODE_HISTORY", "").strip().lower() in {"1", "true", "yes", "on"}
+DASHBOARD_ALLOWED_HOSTS = set()
+DASHBOARD_ALLOWED_ORIGINS = set()
+_FALLBACK_DASHBOARD_TOKEN = None
+DEFAULT_DASHBOARD_SOURCE_DIRS = ("examples", "optimized")
+
+SENSITIVE_DASHBOARD_KEYS = {
+    "best_code",
+    "code_snapshot",
+    "compiler_errors",
+    "current_code",
+    "error_log",
+    "original_code",
+    "original_latency_raw_output",
+    "parent_code_snapshot",
+    "raw_output",
+}
 
 OPTIMIZATION_PRESETS = {
     "balanced": {
@@ -120,6 +141,228 @@ def format_latency_value(latency):
     if latency is None or is_profiling_failure(latency):
         return "Profiling Failed"
     return f"{latency:.4f} ms"
+
+
+def _is_allowed_dashboard_host(hostname):
+    normalized = (hostname or "").strip().strip("[]").lower()
+    if not normalized:
+        return True
+    return normalized in DASHBOARD_ALLOWED_HOSTS
+
+
+def _is_allowed_dashboard_origin(origin):
+    normalized = (origin or "").strip().lower()
+    if not normalized:
+        return True
+    return normalized in DASHBOARD_ALLOWED_ORIGINS
+
+
+def _split_dashboard_source_dirs(raw_value):
+    if not raw_value:
+        return []
+
+    normalized = raw_value.replace("\n", ",").replace(";", ",")
+    parts = []
+    for part in normalized.split(","):
+        cleaned = part.strip().strip("/").strip("\\")
+        if cleaned:
+            parts.append(cleaned)
+    return parts
+
+
+def _get_dashboard_source_dirs():
+    configured = list(DEFAULT_DASHBOARD_SOURCE_DIRS)
+    configured.extend(_split_dashboard_source_dirs(os.environ.get("CUDALLM_DASHBOARD_SOURCE_DIRS", "")))
+
+    workspace = os.path.abspath(os.getcwd())
+    roots = []
+    seen = set()
+    for rel_root in configured:
+        abs_root = os.path.abspath(os.path.join(workspace, rel_root))
+        try:
+            if os.path.commonpath([workspace, abs_root]) != workspace:
+                continue
+        except ValueError:
+            continue
+
+        rel_norm = os.path.relpath(abs_root, workspace).replace("\\", "/")
+        if rel_norm in seen:
+            continue
+        seen.add(rel_norm)
+        roots.append(rel_norm)
+
+    return roots
+
+
+def _dashboard_source_specs():
+    workspace = os.path.abspath(os.getcwd())
+    specs = []
+    for rel_root in _get_dashboard_source_dirs():
+        abs_root = os.path.abspath(os.path.join(workspace, rel_root))
+        basename = os.path.basename(rel_root.rstrip("/")) or rel_root
+        if rel_root == "examples":
+            label = "Examples (sample files)"
+            description = "Example files only; safe sample inputs for experimentation."
+            kind = "examples"
+        elif rel_root == "optimized":
+            label = "Optimized (AI-processed)"
+            description = "Files produced by the AI optimization pipeline."
+            kind = "optimized"
+        else:
+            label = f"Custom: {rel_root}"
+            description = "User-configured dashboard source directory."
+            kind = "custom"
+
+        specs.append({
+            "key": rel_root,
+            "label": label,
+            "description": description,
+            "kind": kind,
+            "abs_root": abs_root,
+            "rel_root": rel_root,
+            "name": basename,
+        })
+    return specs
+
+
+def _file_matches_root(abs_path, abs_root):
+    try:
+        return os.path.commonpath([abs_root, abs_path]) == abs_root
+    except ValueError:
+        return False
+
+
+def _resolve_dashboard_path(file_path, allowed_roots=None):
+    if not file_path:
+        raise ValueError("Path is required")
+
+    workspace = os.path.abspath(os.getcwd())
+    normalized = file_path.replace("\\", "/")
+    candidate = os.path.abspath(file_path if os.path.isabs(file_path) else os.path.join(workspace, normalized))
+
+    try:
+        if os.path.commonpath([workspace, candidate]) != workspace:
+            raise ValueError("Path lies outside workspace")
+    except ValueError as exc:
+        raise ValueError("Path lies outside workspace") from exc
+
+    rel_path = os.path.relpath(candidate, workspace).replace("\\", "/")
+    source_roots = allowed_roots if allowed_roots is not None else [spec["abs_root"] for spec in _dashboard_source_specs()]
+    normalized_roots = []
+    for root in source_roots:
+        abs_root = os.path.abspath(os.path.join(workspace, root)) if not os.path.isabs(root) else os.path.abspath(root)
+        try:
+            if os.path.commonpath([workspace, abs_root]) != workspace:
+                continue
+        except ValueError:
+            continue
+        normalized_roots.append(abs_root)
+
+    if normalized_roots and not any(_file_matches_root(candidate, root) for root in normalized_roots):
+        raise ValueError("Path must be under an allowed dashboard source directory")
+
+    return candidate, rel_path
+
+
+def ensure_optimized_path(file_path):
+    return _resolve_dashboard_path(file_path)[0]
+
+
+def _redact_dashboard_payload(obj):
+    if isinstance(obj, dict):
+        redacted = {}
+        for key, value in obj.items():
+            if key in SENSITIVE_DASHBOARD_KEYS:
+                continue
+            redacted[key] = _redact_dashboard_payload(value)
+        return redacted
+    if isinstance(obj, list):
+        return [_redact_dashboard_payload(item) for item in obj]
+    return obj
+
+
+def _copy_for_persistence(run_state):
+    if STORE_CODE_HISTORY:
+        return deepcopy(run_state)
+    return _redact_dashboard_payload(deepcopy(run_state))
+
+
+def _read_dashboard_token_from_env_file():
+    env_path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(env_path):
+        return None
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].lstrip()
+                if not line.startswith("CUDALLM_DASHBOARD_TOKEN="):
+                    continue
+                _, value = line.split("=", 1)
+                value = value.strip()
+                if value and value[0] == value[-1] and value[0] in {'"', "'"}:
+                    value = value[1:-1]
+                return value or None
+    except Exception:
+        return None
+
+    return None
+
+
+def get_dashboard_token():
+    token = os.environ.get("CUDALLM_DASHBOARD_TOKEN")
+    if token and token.strip():
+        return token.strip()
+
+    token = _read_dashboard_token_from_env_file()
+    if token:
+        return token
+
+    global _FALLBACK_DASHBOARD_TOKEN
+    if not _FALLBACK_DASHBOARD_TOKEN:
+        _FALLBACK_DASHBOARD_TOKEN = secrets.token_urlsafe(32)
+    return _FALLBACK_DASHBOARD_TOKEN
+
+
+DASHBOARD_API_TOKEN = get_dashboard_token()
+
+
+def _configure_dashboard_security(host, port):
+    global DASHBOARD_ALLOWED_HOSTS, DASHBOARD_ALLOWED_ORIGINS
+
+    allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+    allowed_origins = {
+        f"http://localhost:{port}",
+        f"http://127.0.0.1:{port}",
+        f"http://[::1]:{port}",
+    }
+
+    normalized_host = (host or "").strip().strip("[]").lower()
+    if normalized_host and normalized_host not in {"0.0.0.0", "::"} and is_private_network_host(normalized_host):
+        allowed_hosts.add(normalized_host)
+        allowed_origins.add(f"http://{normalized_host}:{port}")
+
+    extra_origins = os.environ.get("CUDALLM_DASHBOARD_ALLOWED_ORIGINS", "")
+    for origin in extra_origins.split(","):
+        origin = origin.strip()
+        if origin:
+            allowed_origins.add(origin)
+            try:
+                parsed = urllib.parse.urlparse(origin)
+                if parsed.hostname:
+                    allowed_hosts.add(parsed.hostname.strip().strip("[]").lower())
+            except Exception:
+                pass
+
+    DASHBOARD_ALLOWED_HOSTS = allowed_hosts
+    DASHBOARD_ALLOWED_ORIGINS = allowed_origins
+
+    if normalized_host in {"0.0.0.0", "::"}:
+        print("[WARNING] Dashboard is bound to all interfaces. Restrict access with CUDALLM_DASHBOARD_ALLOWED_ORIGINS and a strong token.")
 
 
 def record_profile_result(run_state, key, prof_res):
@@ -290,20 +533,6 @@ def update_stage(stage_name):
         active_run["stage"] = stage_name
     log_event(f"Stage changed to: {stage_name}")
 
-def ensure_optimized_path(file_path):
-    workspace = os.path.abspath(os.getcwd())
-    if os.path.isabs(file_path):
-        abs_path = os.path.abspath(file_path)
-        if abs_path.startswith(workspace):
-            return abs_path
-        return os.path.join(workspace, "examples", os.path.basename(file_path))
-    
-    normalized = file_path.replace('\\', '/')
-    parts = [p for p in normalized.split('/') if p]
-    if parts and parts[0] in ('examples', 'optimized'):
-        return os.path.join(workspace, normalized)
-    return os.path.join(workspace, "examples", file_path)
-
 
 def find_latest_ncu_csv_for_file(target_rel_path):
     target = (target_rel_path or "").replace('\\', '/')
@@ -398,12 +627,13 @@ def build_benchmark_summary(run_state):
 
 def persist_benchmark_summary(run_state):
     summary = build_benchmark_summary(run_state)
+    persisted_summary = _copy_for_persistence(summary)
     with benchmark_history_lock:
-        benchmark_history.append(summary)
+        benchmark_history.append(persisted_summary)
         save_benchmark_history(benchmark_history)
     with active_run_lock:
         active_run["benchmark_alerts"] = summary["alerts"]
-        active_run["benchmark_summary"] = summary
+        active_run["benchmark_summary"] = persisted_summary
     return summary
 
 
@@ -438,7 +668,6 @@ def replay_benchmark_iteration(run_record, iteration):
             "iteration": iteration,
             "compile_success": compile_result.get("success", False),
             "error_log": compile_result.get("error_log", ""),
-            "code_snapshot": code_snapshot,
         }
         if compile_result.get("success"):
             prof_res = sandbox.profile_latency(target_metric=target)
@@ -469,7 +698,32 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
      
         pass
 
-    def send_json(self, data, status=200):
+    def _client_host(self):
+        host_header = self.headers.get("Host", "")
+        return host_header.split(":", 1)[0].strip().lower()
+
+    def _dashboard_headers_allowed(self):
+        host = self._client_host()
+        origin = self.headers.get("Origin")
+        if not _is_allowed_dashboard_host(host):
+            self.send_json({"error": "Access denied: host not allowed"}, 403)
+            return False
+        if origin and not _is_allowed_dashboard_origin(origin):
+            self.send_json({"error": "Access denied: origin not allowed"}, 403)
+            return False
+        return True
+
+    def _require_api_token(self):
+        provided = self.headers.get("X-Cudallm-Token")
+        if provided != get_dashboard_token():
+            self.send_json({"error": "unauthorized"}, 401)
+            return False
+        return True
+
+    def _guard_api_request(self):
+        return self._dashboard_headers_allowed() and self._require_api_token()
+
+    def send_json(self, data, status=200, redact_sensitive=False):
         import math
         def sanitize(obj):
             if isinstance(obj, dict):
@@ -481,29 +735,40 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
                     return None
             return obj
 
-        sanitized_data = sanitize(data)
+        sanitized_data = sanitize(_redact_dashboard_payload(data) if redact_sensitive else data)
         try:
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            origin = self.headers.get('Origin')
+            if origin and _is_allowed_dashboard_origin(origin):
+                self.send_header('Access-Control-Allow-Origin', origin)
+                self.send_header('Vary', 'Origin')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Cudallm-Token')
             self.end_headers()
             self.wfile.write(json.dumps(sanitized_data).encode('utf-8'))
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
             pass
 
     def do_OPTIONS(self):
+        if not self._dashboard_headers_allowed():
+            return
         self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
+        origin = self.headers.get('Origin')
+        if origin and _is_allowed_dashboard_origin(origin):
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Cudallm-Token')
         self.end_headers()
 
     def do_GET(self):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
         query = urllib.parse.parse_qs(parsed_url.query)
+
+        if path.startswith('/api/') and not self._guard_api_request():
+            return
 
      
         if path == '/' or path == '/index.html':
@@ -542,6 +807,9 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
 
+        if path.startswith('/api/') and not self._guard_api_request():
+            return
+
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length) if content_length > 0 else b''
         
@@ -577,9 +845,18 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header('Content-Type', content_type)
+            if filename == 'index.html':
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                self.send_header('Pragma', 'no-cache')
+                self.send_header('Expires', '0')
             self.end_headers()
-            with open(filepath, 'rb') as f:
-                self.wfile.write(f.read())
+            if filename == 'index.html':
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    html = f.read().replace('__CUDALLM_DASHBOARD_TOKEN__', get_dashboard_token())
+                self.wfile.write(html.encode('utf-8'))
+            else:
+                with open(filepath, 'rb') as f:
+                    self.wfile.write(f.read())
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
             pass
 
@@ -636,23 +913,35 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
     def handle_api_files(self):
         workspace = os.getcwd()
-        examples_dir = os.path.join(workspace, "examples")
-        optimized_dir = os.path.join(workspace, "optimized")
-        
-        os.makedirs(examples_dir, exist_ok=True)
-        os.makedirs(optimized_dir, exist_ok=True)
-        
-        files = collect_cuda_files(examples_dir, recursive=True) + collect_cuda_files(optimized_dir, recursive=True)
-        
-        rel_files = []
+        source_specs = _dashboard_source_specs()
+
+        flattened_files = []
+        sources = []
         seen = set()
-        for f in files:
-            rel = os.path.relpath(f, workspace)
-            if rel not in seen:
-                seen.add(rel)
-                rel_files.append(rel)
-                
-        self.send_json({"files": sorted(rel_files)})
+
+        for spec in source_specs:
+            os.makedirs(spec["abs_root"], exist_ok=True)
+            files = collect_cuda_files(spec["abs_root"], recursive=True)
+
+            rel_files = []
+            for file_path in files:
+                rel_path = os.path.relpath(file_path, workspace).replace("\\", "/")
+                if rel_path in seen:
+                    continue
+                seen.add(rel_path)
+                rel_files.append(rel_path)
+                flattened_files.append(rel_path)
+
+            sources.append({
+                "key": spec["key"],
+                "label": spec["label"],
+                "description": spec["description"],
+                "kind": spec["kind"],
+                "root": spec["rel_root"],
+                "files": sorted(rel_files),
+            })
+
+        self.send_json({"files": sorted(flattened_files), "sources": sources})
 
     def handle_api_file_get(self, query):
         file_path = query.get('path', [None])[0]
@@ -660,11 +949,10 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Path parameter is required"}, 400)
             return
 
-        file_path = ensure_optimized_path(file_path)
-        abs_path = os.path.abspath(file_path)
-        workspace = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(workspace):
-            self.send_json({"error": "Access denied: Path lies outside workspace"}, 403)
+        try:
+            abs_path, _ = _resolve_dashboard_path(file_path)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 403)
             return
 
         if not os.path.exists(abs_path):
@@ -674,7 +962,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
         try:
             with open(abs_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            self.send_json({"path": file_path, "content": content})
+            self.send_json({"path": os.path.relpath(abs_path, os.getcwd()).replace('\\', '/'), "content": content})
         except Exception as e:
             self.send_json({"error": f"Failed to read file: {str(e)}"}, 500)
 
@@ -685,11 +973,10 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "path and content are required fields"}, 400)
             return
 
-        file_path = ensure_optimized_path(file_path)
-        abs_path = os.path.abspath(file_path)
-        workspace = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(workspace):
-            self.send_json({"error": "Access denied: Path lies outside workspace"}, 403)
+        try:
+            abs_path, rel_path = _resolve_dashboard_path(file_path)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 403)
             return
 
         try:
@@ -698,7 +985,6 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
                 os.makedirs(dir_name, exist_ok=True)
             with open(abs_path, 'w', encoding='utf-8') as f:
                 f.write(content)
-            rel_path = os.path.relpath(abs_path, workspace).replace('\\', '/')
             self.send_json({"success": True, "path": rel_path})
         except Exception as e:
             self.send_json({"error": f"Failed to write file: {str(e)}"}, 500)
@@ -709,11 +995,10 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "path is a required field"}, 400)
             return
 
-        file_path = ensure_optimized_path(file_path)
-        abs_path = os.path.abspath(file_path)
-        workspace = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(workspace):
-            self.send_json({"error": "Access denied: Path lies outside workspace"}, 403)
+        try:
+            abs_path, _ = _resolve_dashboard_path(file_path)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 403)
             return
 
         if not os.path.exists(abs_path):
@@ -728,11 +1013,11 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
     def handle_api_optimize_status(self):
         with active_run_lock:
-            self.send_json(active_run)
+            self.send_json(active_run, redact_sensitive=True)
 
     def handle_api_benchmark_history(self):
         with benchmark_history_lock:
-            self.send_json({"items": benchmark_history[-BENCHMARK_HISTORY_LIMIT:]})
+            self.send_json({"items": benchmark_history[-BENCHMARK_HISTORY_LIMIT:]}, redact_sensitive=True)
 
     def handle_api_optimizer_presets(self):
         self.send_json({
@@ -766,7 +1051,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             replay_result = replay_benchmark_iteration(record, iteration)
-            self.send_json({"success": True, **replay_result})
+            self.send_json({"success": True, **replay_result}, redact_sensitive=True)
         except Exception as exc:
             self.send_json({"error": str(exc)}, 500)
 
@@ -787,11 +1072,10 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "File path is required"}, 400)
             return
 
-        file_path = ensure_optimized_path(file_path)
-        abs_path = os.path.abspath(file_path)
-        workspace = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(workspace):
-            self.send_json({"error": "Access denied: Path lies outside workspace"}, 403)
+        try:
+            abs_path, _ = _resolve_dashboard_path(file_path)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 403)
             return
 
         if not os.path.exists(abs_path):
@@ -849,11 +1133,10 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Path parameter is required"}, 400)
             return
 
-        file_path = ensure_optimized_path(file_path)
-        abs_path = os.path.abspath(file_path)
-        workspace = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(workspace):
-            self.send_json({"error": "Access denied"}, 403)
+        try:
+            abs_path, rel_path = _resolve_dashboard_path(file_path)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 403)
             return
 
         if not os.path.exists(abs_path):
@@ -865,13 +1148,15 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
                 code = f.read()
 
             static_metrics = RooflineAnalyzer.analyze_static(code)
-            rel_path = os.path.relpath(abs_path, workspace).replace('\\', '/')
             ncu_csv_hint = query.get('ncu_csv', [None])[0]
             dynamic_metrics = None
 
             if ncu_csv_hint:
-                hinted = os.path.abspath(ncu_csv_hint)
-                if hinted.startswith(workspace) and os.path.exists(hinted):
+                try:
+                    hinted, _ = _resolve_dashboard_path(ncu_csv_hint, allowed_roots=None)
+                except ValueError:
+                    hinted = None
+                if hinted and os.path.exists(hinted):
                     dynamic_metrics = RooflineAnalyzer.analyze_ncu_csv(hinted)
 
             if dynamic_metrics is None:
@@ -1320,6 +1605,7 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
 def start_dashboard_server(port=8000, host='127.0.0.1'):
     static_dir = os.path.join(os.path.dirname(__file__), 'static')
     os.makedirs(static_dir, exist_ok=True)
+    _configure_dashboard_security(host, port)
     
     server_address = (host, port)
     class ThreadingHTTPServer(ThreadingTCPServer, HTTPServer):

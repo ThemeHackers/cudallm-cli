@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ipaddress
+import os
+import subprocess
+import secrets
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -84,3 +87,95 @@ def build_auth_headers(api_key: str | None = None, api_key_file: str | None = No
     if not key:
         return {}
     return {"Authorization": f"Bearer {key}"}
+
+
+def _parse_env_line(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+
+    if stripped.startswith("export "):
+        stripped = stripped[len("export "):].lstrip()
+
+    if "=" not in stripped:
+        return None
+
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    if not key:
+        return None
+
+    value = value.strip()
+    if value and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return key, value
+
+
+def load_dotenv_file(env_path: str | os.PathLike[str] | None = None, *, override: bool = False) -> bool:
+    path = Path(env_path or Path.cwd() / ".env")
+    if not path.exists() or not path.is_file():
+        return False
+
+    loaded = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_env_line(line)
+        if not parsed:
+            continue
+        key, value = parsed
+        if override or key not in os.environ:
+            os.environ[key] = value
+        loaded = True
+    return loaded
+
+
+def get_secure_dashboard_token(length: int = 32) -> str:
+    if length < 16:
+        raise ValueError("Token length must be at least 16 bytes")
+    return generate_secure_dashboard_token(length=length)
+
+
+def generate_secure_dashboard_token_openssl(length: int = 32) -> str:
+    if length < 16:
+        raise ValueError("Token length must be at least 16 bytes")
+
+    result = subprocess.run(
+        ["openssl", "rand", "-base64", str(length)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    token = result.stdout.strip().replace("+", "-").replace("/", "_").replace("=", "")
+    if not token:
+        raise RuntimeError("OpenSSL did not produce a token")
+    return token
+
+
+def generate_secure_dashboard_token(length: int = 32, prefer_openssl: bool = True) -> str:
+    if prefer_openssl:
+        try:
+            return generate_secure_dashboard_token_openssl(length=length)
+        except Exception:
+            pass
+    return secrets.token_urlsafe(length)
+
+
+def upsert_env_value(env_path: str | os.PathLike[str], key: str, value: str) -> None:
+    path = Path(env_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    found = False
+    if path.exists():
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            parsed = _parse_env_line(raw_line)
+            if parsed and parsed[0] == key:
+                if not found:
+                    lines.append(f"{key}={value}")
+                    found = True
+                continue
+            lines.append(raw_line)
+
+    if not found:
+        lines.append(f"{key}={value}")
+
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")

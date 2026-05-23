@@ -37,3 +37,4 @@ report_*.json
 gemini-cli
 ncu_agent_out.ncu-rep
 nsys_agent_out.nsys-rep
+.env

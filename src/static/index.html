@@ -16,6 +16,23 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script id="dashboard-token" data-token="__CUDALLM_DASHBOARD_TOKEN__"></script>
+    <script>
+        (function () {
+            const tokenScript = document.getElementById('dashboard-token');
+            const token = tokenScript ? tokenScript.dataset.token : '';
+            if (!token) return;
+
+            const nativeFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+                const requestInit = init ? { ...init } : {};
+                const headers = new Headers(requestInit.headers || (input && input.headers ? input.headers : undefined));
+                headers.set('X-Cudallm-Token', token);
+                requestInit.headers = headers;
+                return nativeFetch(input, requestInit);
+            };
+        })();
+    </script>
     <style>
         :root {
             --bg-base: #060913;
@@ -280,6 +297,39 @@
             gap: 0.35rem;
         }
 
+        .sidebar-note {
+            padding: 0 0.95rem 0.6rem;
+            color: var(--text-muted);
+            font-size: 0.74rem;
+            line-height: 1.45;
+        }
+
+        .file-source-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            margin-bottom: 0.4rem;
+        }
+
+        .file-source-header {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            padding: 0.25rem 0.1rem 0.1rem;
+            color: var(--text-muted);
+        }
+
+        .file-source-header strong {
+            color: var(--text-main);
+            font-size: 0.8rem;
+            letter-spacing: 0.01em;
+        }
+
+        .file-source-header span {
+            font-size: 0.72rem;
+            line-height: 1.35;
+        }
+
         .file-item {
             display: flex;
             align-items: center;
@@ -319,6 +369,26 @@
 
         .file-item-info span {
             font-family: var(--font-mono);
+        }
+
+        .file-item-path {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-item-badge {
+            flex-shrink: 0;
+            margin-left: 0.75rem;
+            padding: 0.15rem 0.45rem;
+            border-radius: 999px;
+            border: 1px solid rgba(0, 240, 255, 0.18);
+            background: rgba(0, 240, 255, 0.06);
+            color: var(--primary);
+            font-size: 0.65rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
         }
 
         .file-item i {
@@ -1592,6 +1662,7 @@
                     <i class="fa-solid fa-rotate"></i>
                 </button>
             </div>
+            <div class="sidebar-note">Examples are sample inputs, optimized files are AI-processed outputs, and custom folders can be added through dashboard config.</div>
             <div class="file-list" id="file-list-container">
                 <!-- Populated dynamically -->
             </div>
@@ -2286,29 +2357,50 @@
                 .then(data => {
                     const container = document.getElementById('file-list-container');
                     container.innerHTML = '';
-                    
-                    data.files.forEach(file => {
-                        const div = document.createElement('div');
-                        div.className = 'file-item';
-                        if (file === selectedFile) div.classList.add('active');
-                        
-                        div.innerHTML = `
-                            <div class="file-item-info">
-                                <i class="fa-solid fa-code"></i>
-                                <span>${file}</span>
-                            </div>
-                            <button class="btn-delete-file" title="Delete File">
-                                <i class="fa-solid fa-trash-can"></i>
-                            </button>
-                        `;
-                        
-                        div.querySelector('.file-item-info').addEventListener('click', () => selectFile(file));
-                        div.querySelector('.btn-delete-file').addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            openDeleteModal(file);
+                    if (!data || (!Array.isArray(data.files) && !Array.isArray(data.sources))) {
+                        console.error('Error fetching files:', data && data.error ? data.error : 'Invalid files response');
+                        return;
+                    }
+
+                    const sources = Array.isArray(data.sources) && data.sources.length > 0
+                        ? data.sources
+                        : [{ key: 'all', label: 'All files', description: 'Files discovered in configured dashboard source folders.', kind: 'combined', files: Array.isArray(data.files) ? data.files : [] }];
+
+                    sources.forEach(source => {
+                        const group = document.createElement('div');
+                        group.className = 'file-source-group';
+
+                        const header = document.createElement('div');
+                        header.className = 'file-source-header';
+                        header.innerHTML = `<strong>${source.label || source.key || 'Files'}</strong><span>${source.description || ''}</span>`;
+                        group.appendChild(header);
+
+                        (source.files || []).forEach(file => {
+                            const div = document.createElement('div');
+                            div.className = 'file-item';
+                            if (file === selectedFile) div.classList.add('active');
+
+                            div.innerHTML = `
+                                <div class="file-item-info">
+                                    <i class="fa-solid fa-code"></i>
+                                    <span class="file-item-path">${file}</span>
+                                </div>
+                                <span class="file-item-badge">${source.key || source.kind || 'source'}</span>
+                                <button class="btn-delete-file" title="Delete File">
+                                    <i class="fa-solid fa-trash-can"></i>
+                                </button>
+                            `;
+
+                            div.querySelector('.file-item-info').addEventListener('click', () => selectFile(file));
+                            div.querySelector('.btn-delete-file').addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                openDeleteModal(file);
+                            });
+
+                            group.appendChild(div);
                         });
-                        
-                        container.appendChild(div);
+
+                        container.appendChild(group);
                     });
                 })
                 .catch(err => console.error("Error fetching files:", err));
@@ -2458,29 +2550,40 @@ __global__ void my_kernel() {
             fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
+                    const cpuUsage = Number(data && data.cpu_usage);
+                    const ramTotal = Number(data && data.ram_total);
+                    const ramUsed = Number(data && data.ram_used);
+                    const gpuUsage = Number(data && data.gpu_usage);
+                    const gpuModel = data && data.gpu_model ? data.gpu_model : 'Unknown';
+                    const cudaVersion = data && data.cuda_version ? data.cuda_version : 'N/A';
+                    const config = data && data.config ? data.config : {};
+                    const safeCpuUsage = Number.isFinite(cpuUsage) ? cpuUsage : 0;
+                    const safeRamTotal = Number.isFinite(ramTotal) && ramTotal > 0 ? ramTotal : 1;
+                    const safeRamUsed = Number.isFinite(ramUsed) ? ramUsed : 0;
+                    const safeGpuUsage = Number.isFinite(gpuUsage) ? gpuUsage : 0;
                   
-                    document.getElementById('cpu-val').innerText = `${data.cpu_usage.toFixed(1)}%`;
-                    document.getElementById('cpu-bar').style.width = `${data.cpu_usage}%`;
+                    document.getElementById('cpu-val').innerText = `${safeCpuUsage.toFixed(1)}%`;
+                    document.getElementById('cpu-bar').style.width = `${safeCpuUsage}%`;
 
          
-                    const ramPct = (data.ram_used / data.ram_total) * 100;
-                    document.getElementById('ram-val').innerText = `${data.ram_used.toFixed(1)}/${data.ram_total.toFixed(0)} GB`;
+                    const ramPct = (safeRamUsed / safeRamTotal) * 100;
+                    document.getElementById('ram-val').innerText = `${safeRamUsed.toFixed(1)}/${safeRamTotal.toFixed(0)} GB`;
                     document.getElementById('ram-bar').style.width = `${ramPct}%`;
 
                   
-                    document.getElementById('gpu-val').innerText = `${data.gpu_usage.toFixed(0)}%`;
-                    document.getElementById('gpu-bar').style.width = `${data.gpu_usage}%`;
+                    document.getElementById('gpu-val').innerText = `${safeGpuUsage.toFixed(0)}%`;
+                    document.getElementById('gpu-bar').style.width = `${safeGpuUsage}%`;
 
                 
-                    document.getElementById('gpu-name').innerText = `${data.gpu_model} (${data.cuda_version})`;
+                    document.getElementById('gpu-name').innerText = `${gpuModel} (${cudaVersion})`;
 
           
                     const serverDot = document.getElementById('server-status-dot');
                     const serverText = document.getElementById('server-status-text');
                     
-                    if (data.config.llm_url) {
+                    if (config.llm_url) {
                         serverDot.classList.remove('offline');
-                        serverText.innerText = `Connected: ${data.config.llm_url}`;
+                        serverText.innerText = `Connected: ${config.llm_url}`;
                     } else {
                         serverDot.classList.add('offline');
                         serverText.innerText = "No LLM Endpoint Configured";

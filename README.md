@@ -272,7 +272,8 @@ Use `cudallm help <command>` for short command-specific usage. Keep the detailed
 | `setup-gpu` | None | `--dry-run`, `--force-reinstall` | Verify GPU build readiness. |
 | `serve` | None | `--host`, `--port`, `--public-url`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--allow-unsafe-network`, `--reuse-port` | Check or start the local LLM server. |
 | `agent` | None | `--instruction`, `--llm-url`, `--llm-api-key`, `--llm-api-key-file`, `--insecure` | Run the LangChain agent. |
-| `dashboard` | None | `--host`, `--port` | Launch the dashboard. |
+| `dashboard` | None | `--host`, `--port` | Launch the dashboard. The file browser reads from `examples`, `optimized`, and any extra source folders configured in `CUDALLM_DASHBOARD_SOURCE_DIRS`. |
+| `dashboard-token` | None | `--length`, `--write`, `--env-file` | Generate a secure dashboard token with OpenSSL when available and optionally save it to `.env`. |
 | `sandbox-run` | None | `--image`, `--cmd`, `--mount`, `--workdir`, `--mount-cwd/--no-mount-cwd`, `--timeout`, `--mem-limit-mb` | Run a command in Docker. |
 | `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Optimize CUDA code in a loop. |
 | `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Run the nsys -> ncu expert workflow. |
@@ -449,6 +450,39 @@ Config parameters are persisted inside `config/config.json`. Below is the schema
 ---
 
 ## Troubleshooting
+
+### Dashboard Token
+
+The dashboard loads `CUDALLM_DASHBOARD_TOKEN` from `.env` when it is not already set in the shell environment. If neither is set, the server falls back to a random per-process token.
+
+Generate a secure token:
+```powershell
+cudallm dashboard-token
+```
+
+Write the generated token into `.env`:
+```powershell
+cudallm dashboard-token --write
+```
+
+Example `.env` entry:
+```ini
+CUDALLM_DASHBOARD_TOKEN=your_generated_token_here
+```
+
+### Dashboard File Sources
+
+The dashboard file browser groups files by source so it is clear where they came from:
+* `examples` contains sample input files for quick testing and demos.
+* `optimized` contains files produced by the AI optimization pipeline.
+* You can add your own folders by setting `CUDALLM_DASHBOARD_SOURCE_DIRS` to a comma-, semicolon-, or newline-separated list of workspace-relative folders.
+
+Example `.env` entry with an extra folder:
+```ini
+CUDALLM_DASHBOARD_SOURCE_DIRS=examples,optimized,my-kernels
+```
+
+The dashboard only shows files from the configured source folders, and it labels each group in the sidebar.
 
 ### Windows-Specific Issues
 

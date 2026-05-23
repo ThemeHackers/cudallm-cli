@@ -1,8 +1,9 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
-from src.network_security import build_auth_headers, is_private_network_host, validate_llm_endpoint
+from src.network_security import build_auth_headers, generate_secure_dashboard_token, generate_secure_dashboard_token_openssl, get_secure_dashboard_token, is_private_network_host, load_dotenv_file, upsert_env_value, validate_llm_endpoint
 
 
 class NetworkSecurityTest(unittest.TestCase):
@@ -46,6 +47,61 @@ class NetworkSecurityTest(unittest.TestCase):
             headers = build_auth_headers(api_key_file=str(key_file))
 
         self.assertEqual(headers["Authorization"], "Bearer sk-first-secret")
+
+    def test_load_dotenv_file_reads_values_without_overriding_existing_env(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text("CUDALLM_DASHBOARD_TOKEN=from_file\nSAMPLE_VALUE=hello\n", encoding="utf-8")
+
+            original = os.environ.get("CUDALLM_DASHBOARD_TOKEN")
+            try:
+                os.environ["CUDALLM_DASHBOARD_TOKEN"] = "from_env"
+                cwd = os.getcwd()
+                os.chdir(tmp_dir)
+                try:
+                    loaded = load_dotenv_file()
+                finally:
+                    os.chdir(cwd)
+
+                self.assertTrue(loaded)
+                self.assertEqual(os.environ["CUDALLM_DASHBOARD_TOKEN"], "from_env")
+                self.assertEqual(os.environ["SAMPLE_VALUE"], "hello")
+            finally:
+                if original is None:
+                    os.environ.pop("CUDALLM_DASHBOARD_TOKEN", None)
+                else:
+                    os.environ["CUDALLM_DASHBOARD_TOKEN"] = original
+                os.environ.pop("SAMPLE_VALUE", None)
+
+    def test_upsert_env_value_writes_token_line(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            upsert_env_value(env_path, "CUDALLM_DASHBOARD_TOKEN", "token-value")
+
+            content = env_path.read_text(encoding="utf-8")
+
+        self.assertIn("CUDALLM_DASHBOARD_TOKEN=token-value", content)
+
+    def test_get_secure_dashboard_token_returns_urlsafe_value(self):
+        token = get_secure_dashboard_token()
+
+        self.assertGreaterEqual(len(token), 32)
+        self.assertNotIn(" ", token)
+        self.assertNotIn("/", token)
+
+    def test_generate_secure_dashboard_token_openssl_returns_urlsafe_value(self):
+        token = generate_secure_dashboard_token_openssl()
+
+        self.assertGreaterEqual(len(token), 32)
+        self.assertNotIn(" ", token)
+        self.assertNotIn("+", token)
+        self.assertNotIn("/", token)
+
+    def test_generate_secure_dashboard_token_prefers_openssl(self):
+        token = generate_secure_dashboard_token(prefer_openssl=True)
+
+        self.assertGreaterEqual(len(token), 32)
+        self.assertNotIn(" ", token)
 
 
 if __name__ == "__main__":

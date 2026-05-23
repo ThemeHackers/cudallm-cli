@@ -15,7 +15,7 @@ from .discover import check_environment, discover_tool_paths, find_ncu_path, fin
 from .sandbox import CUDASandbox
 from .llm_client import LLMClient
 from .profiler_tools import build_ncu_command, build_nsys_command, run_nsys, run_ncu_broad, parse_ncu_csv_for_hotspot, summarize_profile_outputs
-from .network_security import validate_llm_endpoint
+from .network_security import load_dotenv_file, generate_secure_dashboard_token, upsert_env_value, validate_llm_endpoint
 from .docker_sandbox import run_in_docker
 from .terminal_manager import TerminalManager
 from . import platform_info
@@ -39,6 +39,8 @@ from rich.text import Text
 from rich import box
 
 console = Console()
+
+load_dotenv_file()
 
 CONFIG_PATH = str(platform_info.get_config_path())
 _LEGACY_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
@@ -1896,6 +1898,19 @@ def dashboard(host, port):
     """
     from .dashboard import start_dashboard_server
     start_dashboard_server(port=port, host=host)
+
+
+@main.command(name='dashboard-token')
+@click.option('--length', default=32, type=click.IntRange(min=16), show_default=True, help='Token size in random bytes before url-safe encoding')
+@click.option('--write', is_flag=True, help='Write the generated token into .env in the current working directory')
+@click.option('--env-file', default='.env', show_default=True, type=click.Path(dir_okay=False, path_type=str), help='Path to the dotenv file to update when --write is used')
+def dashboard_token(length, write, env_file):
+    """Generate a secure dashboard token using OpenSSL when available."""
+    token = generate_secure_dashboard_token(length=length, prefer_openssl=True)
+    if write:
+        upsert_env_value(env_file, 'CUDALLM_DASHBOARD_TOKEN', token)
+        click.echo(f'Updated {env_file} with CUDALLM_DASHBOARD_TOKEN')
+    click.echo(token)
 
 if __name__ == '__main__':
     main()

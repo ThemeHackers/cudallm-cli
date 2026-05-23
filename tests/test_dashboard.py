@@ -5,8 +5,9 @@ import requests
 import socket
 import json
 import os
+import tempfile
 
-from src.dashboard import start_dashboard_server, active_run, active_run_lock
+from src.dashboard import DASHBOARD_API_TOKEN, active_run, active_run_lock, start_dashboard_server
 
 def find_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -27,6 +28,12 @@ class DashboardServerTest(unittest.TestCase):
         cls.server_thread.start()
        
         time.sleep(1.0)
+
+    def api_headers(self, extra=None):
+        headers = {"X-Cudallm-Token": DASHBOARD_API_TOKEN}
+        if extra:
+            headers.update(extra)
+        return headers
 
     def test_serve_index_html(self):
         url = f"http://localhost:{self.port}/"
@@ -52,7 +59,7 @@ class DashboardServerTest(unittest.TestCase):
 
     def test_api_status(self):
         url = f"http://localhost:{self.port}/api/status"
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("cpu_usage", data)
@@ -67,7 +74,7 @@ class DashboardServerTest(unittest.TestCase):
 
         try:
             url = f"http://localhost:{self.port}/api/status"
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, headers=self.api_headers(), timeout=5)
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
             self.assertEqual(data["current_profile_mode"], "auto-relaxed")
@@ -78,16 +85,42 @@ class DashboardServerTest(unittest.TestCase):
 
     def test_api_files(self):
         url = f"http://localhost:{self.port}/api/files"
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("files", data)
+        self.assertIn("sources", data)
+        self.assertTrue(any(source["key"] == "examples" for source in data["sources"]))
+        self.assertTrue(any(source["key"] == "optimized" for source in data["sources"]))
      
         self.assertTrue(any("vector_add.cu" in f for f in data["files"]))
 
+    def test_api_files_includes_custom_source_directory(self):
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as temp_dir:
+            source_file = os.path.join(temp_dir, "custom_kernel.cu")
+            with open(source_file, "w", encoding="utf-8") as handle:
+                handle.write("__global__ void custom_kernel() {}\n")
+
+            previous_value = os.environ.get("CUDALLM_DASHBOARD_SOURCE_DIRS")
+            relative_root = os.path.relpath(temp_dir, os.getcwd()).replace("\\", "/")
+            os.environ["CUDALLM_DASHBOARD_SOURCE_DIRS"] = relative_root
+            try:
+                url = f"http://localhost:{self.port}/api/files"
+                resp = requests.get(url, headers=self.api_headers(), timeout=5)
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertTrue(any(source["key"] == relative_root for source in data["sources"]))
+                self.assertTrue(any(source["root"] == relative_root for source in data["sources"]))
+                self.assertTrue(any("custom_kernel.cu" in f for f in data["files"]))
+            finally:
+                if previous_value is None:
+                    os.environ.pop("CUDALLM_DASHBOARD_SOURCE_DIRS", None)
+                else:
+                    os.environ["CUDALLM_DASHBOARD_SOURCE_DIRS"] = previous_value
+
     def test_api_optimize_status(self):
         url = f"http://localhost:{self.port}/api/optimize/status"
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["status"], "idle")
@@ -96,15 +129,62 @@ class DashboardServerTest(unittest.TestCase):
 
     def test_api_optimize_status_includes_profiling_fields(self):
         url = f"http://localhost:{self.port}/api/optimize/status"
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertIn("original_latency_profiling_failed", data)
-        self.assertIn("original_latency_raw_output", data)
+        self.assertNotIn("original_code", data)
+        self.assertNotIn("best_code", data)
+        self.assertNotIn("current_code", data)
+        self.assertNotIn("original_latency_raw_output", data)
+
+    def test_cross_origin_post_rejected_without_token(self):
+        url = f"http://localhost:{self.port}/api/file"
+        resp = requests.post(
+            url,
+            headers={"Origin": "https://attacker.example"},
+            json={"path": "examples/a.cu", "content": "x"},
+            timeout=5,
+        )
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_post_rejected_without_token(self):
+        url = f"http://localhost:{self.port}/api/file"
+        resp = requests.post(
+            url,
+            json={"path": "examples/a.cu", "content": "x"},
+            timeout=5,
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_rejects_path_escape_with_sibling_prefix(self):
+        url = f"http://localhost:{self.port}/api/file"
+        resp = requests.post(
+            url,
+            headers=self.api_headers(),
+            json={"path": "examples/../../cudallm-cli-poc/owned.txt", "content": "x"},
+            timeout=5,
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_status_redacts_code_fields(self):
+        url = f"http://localhost:{self.port}/api/optimize/status"
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertNotIn("original_code", body)
+        self.assertNotIn("best_code", body)
+        self.assertNotIn("current_code", body)
+
+    def test_history_redacts_code_snapshots(self):
+        url = f"http://localhost:{self.port}/api/benchmark/history"
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("code_snapshot", resp.text)
+        self.assertNotIn("parent_code_snapshot", resp.text)
 
     def test_api_benchmark_history(self):
         url = f"http://localhost:{self.port}/api/benchmark/history"
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("items", data)
@@ -143,7 +223,7 @@ class DashboardServerTest(unittest.TestCase):
 
     def test_api_optimizer_presets(self):
         url = f"http://localhost:{self.port}/api/optimizer/presets"
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("presets", data)
@@ -151,7 +231,7 @@ class DashboardServerTest(unittest.TestCase):
 
     def test_api_benchmark_replay_requires_fields(self):
         url = f"http://localhost:{self.port}/api/benchmark/replay"
-        resp = requests.post(url, json={}, timeout=5)
+        resp = requests.post(url, headers=self.api_headers(), json={}, timeout=5)
         self.assertEqual(resp.status_code, 400)
 
     def test_profiling_failure_sentinel_remains_serializable(self):
@@ -161,20 +241,20 @@ class DashboardServerTest(unittest.TestCase):
 
         try:
             url = f"http://localhost:{self.port}/api/optimize/status"
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, headers=self.api_headers(), timeout=5)
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
             self.assertEqual(data["original_latency"], 99999.0)
             self.assertTrue(data["original_latency_profiling_failed"])
-            self.assertIn("NCU profiling failed", data["original_latency_raw_output"])
+            self.assertNotIn("original_latency_raw_output", data)
         finally:
             active_run["original_latency"] = None
             active_run["original_latency_profiling_failed"] = False
             active_run["original_latency_raw_output"] = ""
 
     def test_api_roofline_fails_on_non_existent(self):
-        url = f"http://localhost:{self.port}/api/roofline?path=does_not_exist.cu"
-        resp = requests.get(url, timeout=5)
+        url = f"http://localhost:{self.port}/api/roofline?path=examples/does_not_exist.cu"
+        resp = requests.get(url, headers=self.api_headers(), timeout=5)
         self.assertEqual(resp.status_code, 404)
 
 if __name__ == "__main__":
