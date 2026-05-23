@@ -6,9 +6,11 @@ from typing import Optional, Dict, Any
 
 from .langchain_agent import compile_cuda
 from .profiler_tools import parse_ncu_csv_for_hotspot, summarize_profile_outputs
+from .profile_explain import explain_combined
 from .discover import find_nsys_path, find_ncu_path
 from .sandbox_security import run_sandboxed
 from .profile_parsers import extract_metrics_from_ncu_csv
+from .profiler_tools import run_ncu_broad
 import shlex
 
 
@@ -118,6 +120,48 @@ def run_feedback_pipeline(source_path: str, verify_cmd: str = 'python verify.py'
     report['ncu_hotspot_value'] = hotspot
 
     report['summary'] = summarize_profile_outputs(nsys_out or report.get('nsys_res', {}).get('out', ''), report.get('ncu_csv'))
+
+
+    try:
+        explanation = explain_combined(nsys_out or report.get('nsys_res', {}).get('out', ''), report.get('ncu_csv'))
+        report['explanation'] = explanation
+      
+        combined_recs = []
+        if explanation.get('nsys') and explanation['nsys'].get('recommendations'):
+            combined_recs.extend(explanation['nsys']['recommendations'])
+        if explanation.get('ncu') and explanation['ncu'].get('recommendations'):
+            combined_recs.extend(explanation['ncu']['recommendations'])
+       
+        hotspot = explanation.get('ncu', {}).get('hotspot')
+        if hotspot:
+            combined_recs.insert(0, f"Focus on kernel: {hotspot}")
+        report['action_hints'] = combined_recs
+     
+        gen = explanation.get('generated_prompt')
+        if gen:
+            report['suggested_prompt'] = gen
+        elif combined_recs:
+            report['suggested_prompt'] = (
+                "Analyze these profiling findings and propose concrete CUDA code edits (one per suggestion):\n" +
+                "\n".join(f"- {s}" for s in combined_recs)
+            )
+      
+        nvtx_ranges = explanation.get('nsys_nvtx_ranges') or []
+        targeted = []
+        if nvtx_ranges:
+            try:
+                for idx, rng in enumerate(nvtx_ranges, start=1):
+                   
+                    parts = shlex.split(verify_cmd) if isinstance(verify_cmd, str) else verify_cmd
+                    cmdline = ' '.join(parts)
+                    extra_args = ['--nvtx-include', rng]
+                    ncu_target_res = run_ncu_broad(cmdline, output_base=f'ncu_nvtx_{idx}', metrics=metrics, extra_args=extra_args)
+                    targeted.append(ncu_target_res)
+                report['ncu_nvtx_targeted'] = targeted
+            except Exception as e:
+                report['ncu_nvtx_error'] = str(e)
+    except Exception as e:
+        report['explanation_error'] = str(e)
 
     report['reward'] = compute_reward({
         'nsys_total_time': nsys_time,

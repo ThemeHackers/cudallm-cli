@@ -1,0 +1,14 @@
+You are a CUDA performance engineer. The profiling results indicate a compute-bound kernel or low SM efficiency.
+
+Hotspot: {{hotspot}}
+Detected issue: compute_bound_or_unknown, low_sm_efficiency
+
+Suggested changes (one or more):
+- Tune block/grid dimensions to improve occupancy.
+- Apply loop unrolling or pragma unroll when safe.
+- Use fast math intrinsics (e.g., __fmul_rn, __fadd_rn) or tensor cores if applicable.
+
+For each change provide:
+1) A minimal unified diff patch.
+2) Brief rationale referring to the metric (e.g., sm__throughput, sm__efficiency).
+3) Validation steps: nvcc compile command, run harness, and `ncu --metrics sm__throughput` expected improvement.

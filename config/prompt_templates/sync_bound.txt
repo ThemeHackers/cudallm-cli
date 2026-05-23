@@ -1,0 +1,14 @@
+You are a CUDA performance engineer. The profiling results indicate synchronization or kernel-launch overheads.
+
+Hotspot: {{hotspot}}
+Detected issue: synchronization_overhead, kernel_launch_overhead
+
+Suggested changes (one or more):
+- Remove unnecessary device synchronizations or move them off the critical path.
+- Use CUDA streams to overlap memcpy and compute.
+- Fuse small kernels or batch work to reduce launch overhead.
+
+For each change provide:
+1) A minimal unified diff patch.
+2) Brief rationale referring to timeline (nsys) or launch metrics.
+3) Validation steps: nvcc compile, run harness, and `nsys profile` focused on ranges; expected reduction in Total Time or wall-clock.

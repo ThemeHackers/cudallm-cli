@@ -165,6 +165,20 @@ def summarize_profile(nsys_out: str, ncu_csv: Optional[str] = None) -> str:
     except Exception as e:
         return json.dumps({"error": f"Failed to summarize profile data: {str(e)}"})
 
+
+@tool
+def explain_profile(nsys_out: str, ncu_csv: Optional[str] = None) -> str:
+    """Explain profiling outputs and provide lightweight diagnosis and recommendations.
+    Args: nsys_out (string content of nsys output), ncu_csv (optional path to CSV file).
+    Returns JSON string with structured diagnosis.
+    """
+    try:
+        from .profile_explain import explain_combined
+        res = explain_combined(nsys_out, ncu_csv)
+        return json.dumps(res)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to explain profile data: {str(e)}"})
+
 @tool
 def audit_cuda_code(source_path: str) -> str:
     """Statically audit a CUDA source file for performance issues and safety vulnerabilities. Args: source_path. Returns an audit report string."""
