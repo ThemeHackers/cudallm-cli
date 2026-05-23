@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from typing import List, Optional, Any
 from pydantic import Field
@@ -19,16 +20,28 @@ import shlex
 
 @tool
 def compile_cuda(source_path: str, out_path: Optional[str] = None, extra_args: Optional[List[str]] = None, timeout: int = 120, mem_limit_mb: int = 1024) -> str:
-    """Compile a CUDA source file using nvcc. Args: source_path, out_path (optional), extra_args (optional). Returns JSON string with rc/stdout/stderr."""
+    """Compile a CUDA source file using nvcc. Args: source_path, out_path (optional), extra_args (optional). Returns JSON string with rc/stdout/stderr.
+    Note: By default it compiles as a shared library module (.so/.dll). If you need a runnable executable, specify out_path ending with '.exe' (on Windows) or without extensions (on Linux)."""
     locate_and_setup_msvc()
     nvcc = find_nvcc_path()
     if not nvcc:
         return json.dumps({"error": "nvcc not found"})
+
+    is_shared = True
+    if out_path and out_path.endswith((".exe", ".bin")):
+        is_shared = False
+    if extra_args and any(arg in extra_args for arg in ("-shared", "--shared")):
+        is_shared = True
+
     if not out_path:
         base = os.path.splitext(os.path.basename(source_path))[0]
-        out_path = os.path.abspath(f"{base}.so")
+        ext = ".so" if sys.platform != "win32" else ".dll"
+        out_path = os.path.abspath(f"{base}{ext}")
 
-    cmd = [nvcc, '-O3', '-shared', '-Xcompiler', '-fPIC', '-o', out_path, source_path]
+    cmd = [nvcc, '-O3', '-o', out_path, source_path]
+    if is_shared:
+        cmd[2:2] = ['-shared', '-Xcompiler', '-fPIC']
+
     if extra_args:
         cmd[1:1] = extra_args
     res = run_sandboxed(cmd, timeout=timeout, mem_limit_mb=mem_limit_mb)
@@ -258,5 +271,11 @@ def create_agent_with_llmclient(llm_client):
     local_model = LocalLMStudioChat(base_url=base_url, api_key=api_key, model_name=agent_model)
     console.print(f"[bold blue][INFO] Agent LLM Endpoint:[/bold blue] {base_url} | [bold]Model:[/bold] {agent_model or 'local-model'}")
     tools = get_tools()
-    agent = create_agent(model=local_model, tools=tools, system_prompt="You are a helpful CUDA performance engineer.")
+    system_prompt = (
+        "You are a helpful CUDA performance engineer. You are running on Windows.\n"
+        "1. On Windows, executable binaries must end with '.exe' (do not use './a.out').\n"
+        "2. If you compile using the compile_cuda tool without specifying an out_path, it will generate a shared module (.so or .dll) which cannot be executed directly. If you need a runnable executable binary to profile, specify out_path ending with '.exe'.\n"
+        "3. The optimize_cuda tool already compiles, checks verification correctness, and profiles the kernel automatically. You do not need to call compile_cuda or profile_kernel again unless explicitly requested to perform a separate profile on a custom executable."
+    )
+    agent = create_agent(model=local_model, tools=tools, system_prompt=system_prompt)
     return agent
