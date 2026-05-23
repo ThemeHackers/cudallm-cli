@@ -67,7 +67,7 @@ def profile_system(cmdline: str, output_base: Optional[str] = None, timeout: int
     output_base = output_base or "nsys_agent_out"
     parts = shlex.split(cmdline) if isinstance(cmdline, str) else cmdline
     
-    # Filter out nsys flags from user input to avoid conflicts
+
     _skip_flags = {'--trace', '--output', '-o', '--duration', '-t', '--delay', '-d', 
                    '--force-overwrite', '-f', '--capture-range', '--capture-range-end',
                    '--capture-range-type', '--cudabacktrace', '--env', '--inherit-env',
@@ -132,13 +132,6 @@ def profile_kernel(cmdline: str, metrics: Optional[str] = None, timeout: int = 6
         if parts[0] and not os.path.isabs(parts[0]):
             if os.path.exists(parts[0]):
                 parts[0] = os.path.abspath(parts[0])
-        
-       
-        if parts[0] and not os.path.exists(parts[0]):
-            return json.dumps({
-                "error": f"Executable '{parts[0]}' not found. Please compile it first using compile_cuda, or use find_file to locate it.",
-                "suggestion": "Run compile_cuda with out_path ending in '.exe' before profiling."
-            })
 
     BASELINE_METRICS = (
         "gpu__time_duration.sum,"
