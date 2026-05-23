@@ -45,6 +45,7 @@ _LEGACY_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), '
 
 DEFAULT_CONFIG = {
     "llm_url": f"http://127.0.0.1:{platform_info.get_default_llm_port()}/v1/completions",
+    "agent_llm_url": None,
     "llm_api_key": None,
     "llm_api_key_file": None,
     "llm_verify_tls": True,
@@ -733,7 +734,8 @@ def optimize_single_file(input_file, output, iters, target, retries, fast_math, 
         f"  [bold]Target Metric:[/bold] {target}\n"
         f"  [bold]Iterations:[/bold] {iters}\n"
         f"  [bold]Optimization Level:[/bold] -O{opt_level} {'(with fast-math)' if fast_math else ''}\n"
-        f"  [bold]Local LLM Backend:[/bold] {llm.url}",
+        f"  [bold]Local LLM Backend:[/bold] {llm.url}\n"
+        f"  [bold]Model Name:[/bold] {llm.model_name or 'local-model'}",
         border_style="bold green",
         title="Local CUDA Optimization Agent"
     ))
@@ -983,11 +985,14 @@ def check():
 @click.option('--insecure', is_flag=True, help='Bypass HTTPS/TLS verification and allow insecure remote HTTP connections')
 def agent(instruction, llm_url, llm_api_key, llm_api_key_file, insecure):
     """Run LangChain-based autonomous performance engineering agent."""
+    locate_and_setup_msvc()
     from .langchain_agent import create_agent_with_llmclient
     
     config = load_config()
     if llm_url:
         config["llm_url"] = llm_url
+    elif config.get("agent_llm_url"):
+        config["llm_url"] = config["agent_llm_url"]
     if llm_api_key:
         config["llm_api_key"] = llm_api_key
     if llm_api_key_file:

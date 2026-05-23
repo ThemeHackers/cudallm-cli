@@ -72,6 +72,7 @@ class LLMClient:
         api_key_file=None,
         verify_tls=True,
         allow_insecure_remote=False,
+        model_name_override=None,
     ):
         self.url = url
         from urllib.parse import urlparse
@@ -91,8 +92,9 @@ class LLMClient:
         self.verify_tls = verify_tls
         self.endpoint_info = validate_llm_endpoint(self.url, allow_insecure_remote=allow_insecure_remote)
         self._validate_url()
-        self.model_name = None
-        self._detect_model_name()
+        self.model_name = model_name_override
+        if not self.model_name:
+            self._detect_model_name()
         
     def _is_ollama(self):
         return "ollama" in self.url.lower() or "11434" in self.url
@@ -119,7 +121,11 @@ class LLMClient:
                 if models:
                     non_embed_models = [m.get("id") for m in models if "embed" not in m.get("id", "").lower()]
                     if non_embed_models:
-                        self.model_name = non_embed_models[0]
+                        cuda_models = [m for m in non_embed_models if any(k in m.lower() for k in ("cuda", "llm", "coder"))]
+                        if cuda_models:
+                            self.model_name = cuda_models[0]
+                        else:
+                            self.model_name = non_embed_models[0]
                     else:
                         self.model_name = models[0].get("id")
         except Exception:

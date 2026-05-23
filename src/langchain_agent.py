@@ -2,6 +2,9 @@ import os
 import json
 from typing import List, Optional, Any
 from pydantic import Field
+from rich.console import Console
+
+console = Console()
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
@@ -11,11 +14,13 @@ from langchain.agents import create_agent
 from .discover import find_nvcc_path, find_nsys_path, find_ncu_path
 from .profiler_tools import summarize_profile_outputs
 from .sandbox_security import run_sandboxed
+from .cli import load_config, locate_and_setup_msvc
 import shlex
 
 @tool
 def compile_cuda(source_path: str, out_path: Optional[str] = None, extra_args: Optional[List[str]] = None, timeout: int = 120, mem_limit_mb: int = 1024) -> str:
     """Compile a CUDA source file using nvcc. Args: source_path, out_path (optional), extra_args (optional). Returns JSON string with rc/stdout/stderr."""
+    locate_and_setup_msvc()
     nvcc = find_nvcc_path()
     if not nvcc:
         return json.dumps({"error": "nvcc not found"})
@@ -91,13 +96,34 @@ def audit_cuda_code(source_path: str) -> str:
         return json.dumps({"status": "Clean", "message": "No obvious static code optimization or safety issues found."})
     return json.dumps({"status": "Issues Found", "report": "\n".join(issues)})
 
+@tool
+def optimize_cuda(source_path: str, out_path: Optional[str] = None, iters: int = 3, target: str = "latency") -> str:
+    """Optimize a CUDA kernel using the iterative self-healing cudallm optimizer (powered by the specialized cudaLLM model).
+    Args: source_path (path to .cu file), out_path (optional output path), iters (number of optimization loops, default 3), target (default 'latency').
+    Returns a JSON string with the results of the optimization run."""
+    import sys
+    
+    config = load_config()
+    optimizer_url = config.get("llm_url")
+    
+    project_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    cmd = [sys.executable, "-m", "src.cli", "optimize", source_path, "--iters", str(iters), "--target", target]
+    if out_path:
+        cmd += ["-o", out_path]
+    if optimizer_url:
+        cmd += ["--llm-url", optimizer_url]
+        
+    res = run_sandboxed(cmd, cwd=project_root, timeout=iters * 300, mem_limit_mb=2048)
+    return json.dumps(res)
+
 def get_tools() -> List[Any]:
-    return [compile_cuda, profile_system, profile_kernel, summarize_profile, audit_cuda_code]
+    return [compile_cuda, profile_system, profile_kernel, summarize_profile, audit_cuda_code, optimize_cuda]
 
 class LocalLMStudioChat(BaseChatModel):
     base_url: str
     api_key: str = "lm-studio"
     openai_tools: List[Any] = Field(default_factory=list)
+    model_name: Optional[str] = Field(default=None)
 
     @property
     def _llm_type(self) -> str:
@@ -157,7 +183,7 @@ class LocalLMStudioChat(BaseChatModel):
 
         client = OpenAI(base_url=self.base_url, api_key=self.api_key)
         api_kwargs = {
-            "model": "local-model",
+            "model": self.model_name or "local-model",
             "messages": openai_messages,
         }
         if self.openai_tools:
@@ -206,7 +232,31 @@ def create_agent_with_llmclient(llm_client):
     if auth and auth.startswith("Bearer "):
         api_key = auth.split(" ")[1]
 
-    local_model = LocalLMStudioChat(base_url=base_url, api_key=api_key)
+    config = load_config()
+    agent_model = config.get("agent_llm_model_name")
+
+    if not agent_model:
+        try:
+            import requests
+            models_url = base_url.rstrip("/") + "/models"
+            headers = {}
+            if api_key and api_key != "lm-studio":
+                headers["Authorization"] = f"Bearer {api_key}"
+            r = requests.get(models_url, headers=headers, timeout=3)
+            if r.status_code == 200:
+                models = r.json().get("data", [])
+                non_embed_models = [m.get("id") for m in models if "embed" not in m.get("id", "").lower()]
+                if non_embed_models:
+                    agent_models = [m for m in non_embed_models if any(k in m.lower() for k in ("qwen", "llama", "instruct"))]
+                    if agent_models:
+                        agent_model = agent_models[0]
+                    else:
+                        agent_model = non_embed_models[0]
+        except Exception:
+            pass
+
+    local_model = LocalLMStudioChat(base_url=base_url, api_key=api_key, model_name=agent_model)
+    console.print(f"[bold blue][INFO] Agent LLM Endpoint:[/bold blue] {base_url} | [bold]Model:[/bold] {agent_model or 'local-model'}")
     tools = get_tools()
     agent = create_agent(model=local_model, tools=tools, system_prompt="You are a helpful CUDA performance engineer.")
     return agent

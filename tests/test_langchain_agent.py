@@ -10,6 +10,7 @@ from src.langchain_agent import (
     get_tools,
     LocalLMStudioChat,
     create_agent_with_llmclient,
+    optimize_cuda,
 )
 
 class LangChainAgentTest(unittest.TestCase):
@@ -54,6 +55,25 @@ class LangChainAgentTest(unittest.TestCase):
         self.assertIn("profile_kernel", names)
         self.assertIn("summarize_profile", names)
         self.assertIn("audit_cuda_code", names)
+        self.assertIn("optimize_cuda", names)
+
+    @patch("src.langchain_agent.load_config")
+    @patch("src.langchain_agent.run_sandboxed")
+    def test_optimize_cuda_tool(self, mock_run, mock_load_config):
+        mock_load_config.return_value = {"llm_url": "http://mock-opt:1235/v1/completions"}
+        mock_run.return_value = {"rc": 0, "stdout": "optimized successfully", "stderr": ""}
+
+        res_str = optimize_cuda.invoke({"source_path": "kernel.cu", "out_path": "opt.cu", "iters": 2, "target": "latency"})
+        res = json.loads(res_str)
+
+        self.assertEqual(res["rc"], 0)
+        self.assertIn("optimized successfully", res["stdout"])
+
+        args = mock_run.call_args.args[0]
+        self.assertIn("optimize", args)
+        self.assertIn("kernel.cu", args)
+        self.assertIn("--llm-url", args)
+        self.assertIn("http://mock-opt:1235/v1/completions", args)
 
     def test_audit_cuda_code_tool(self):
       
