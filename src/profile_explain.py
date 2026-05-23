@@ -165,51 +165,115 @@ def detect_nvtx_ranges(nsys_out: str) -> list:
 
 def generate_prompt(explanation: Dict[str, Any]) -> str:
     """Create an LLM-ready prompt from the combined explanation structure."""
-    import pathlib
+    parts = []
+    parts.append("You are a CUDA performance engineer assistant. Analyze the profiling findings and propose concrete, minimal code edits or harness changes to improve performance. Always preserve numerical correctness and include a test-case adjustment if needed.")
 
-    header = "You are a CUDA performance engineer assistant. Analyze the profiling findings and propose concrete, minimal code edits or harness changes to improve performance. Always preserve numerical correctness and include a test-case adjustment if needed."
     ncu_section = explanation.get('ncu') or {}
-    hotspot = ncu_section.get('hotspot') or '(unknown)'
-    issues = (explanation.get('combined') or {}).get('issues', [])
-    nvtx = explanation.get('nsys_nvtx_ranges') or []
+    hotspot = ncu_section.get('hotspot')
+    if not nsys_out:
+        return []
+    import re
+    ranges = []
 
-    tmpl_dir = pathlib.Path(__file__).resolve().parents[1] / 'config' / 'prompt_templates'
-    issue_to_template = {
-        'memory_bound': 'memory_bound.txt',
-        'host_device_transfers': 'memory_bound.txt',
-        'low_sm_efficiency': 'compute_bound.txt',
-        'compute_bound_or_unknown': 'compute_bound.txt',
-        'synchronization_overhead': 'sync_bound.txt',
-        'kernel_launch_overhead': 'sync_bound.txt',
-    }
+  
+    for m in re.finditer(r'"?([\w \-\.:/\\]+)@([\w \-\.:/\\]+)"?', nsys_out):
+        dom = m.group(1).strip()
+        rng = m.group(2).strip()
+        token = f"{dom}@{rng}" if dom else rng
+        if token not in ranges:
+            ranges.append(token)
 
-    selected_template = None
-    for issue in issues:
-        template_name = issue_to_template.get(issue)
-        if not template_name:
-            continue
-        candidate = tmpl_dir / template_name
-        if candidate.exists():
-            selected_template = candidate
-            break
+   
+    for line in nsys_out.splitlines():
+        if 'nvtx' in line.lower() or 'nvtx' in line or 'range' in line.lower():
+            q = re.findall(r'"([^"]+)"', line)
+            for s in q:
+                s = s.strip()
+                if s and s not in ranges:
+                    ranges.append(s)
 
-    if selected_template is not None:
+  
+    for m in re.finditer(r"([A-Za-z0-9_\- ]{3,80})\]|([A-Za-z0-9_\- ]{3,80})\)|'([A-Za-z0-9_\- ]{3,80})'", nsys_out):
+        for g in m.groups():
+            if not g:
+                continue
+            s = g.strip().strip("'")
+            if len(s) > 2 and ' ' in s and s not in ranges:
+                ranges.append(s)
+
+ 
+    for m in re.finditer(r'([\w\/:\\\.\-]+\.(nsys-rep|nsys|sqlite|db))', nsys_out):
+        path = m.group(1)
         try:
-            prompt = selected_template.read_text(encoding='utf-8').replace('{{hotspot}}', hotspot)
-            if nvtx:
-                prompt += "\n\nNVTX ranges to focus on:\n"
-                for range_name in nvtx:
-                    prompt += f"- {range_name}\n"
-            return prompt
+            if os.path.exists(path):
+                with open(path, 'rb') as f:
+                    data = f.read().decode('utf-8', errors='ignore')
+                    for q in re.findall(r'"([^"]{3,80})"', data):
+                        if 'nvtx' in q.lower() or 'range' in q.lower() or '@' in q:
+                            if q not in ranges:
+                                ranges.append(q)
         except Exception:
             pass
 
-    parts = [header, f"Hotspot kernel: {hotspot}", "Detected issues:"]
-    for issue in issues:
-        parts.append(f"- {issue}")
-    if nvtx:
-        parts.append("NVTX ranges detected:")
-        for range_name in nvtx:
-            parts.append(f"- {range_name}")
-    parts.append("For each suggested code edit: 1) show a minimal unified diff patch, 2) explain why it helps with the detected metric, 3) provide the validation command(s) and expected metric to check.")
-    return "\n".join(parts)
+
+    seen = set()
+    out = []
+    for r in ranges:
+        if r not in seen:
+
+            import pathlib
+            tmpl_dir = pathlib.Path(__file__).resolve().parents[1] / 'config' / 'prompt_templates'
+
+            ncu_section = explanation.get('ncu') or {}
+            hotspot = ncu_section.get('hotspot') or '(unknown)'
+            issues = (explanation.get('combined') or {}).get('issues', [])
+            nvtx = explanation.get('nsys_nvtx_ranges') or []
+
+         
+            issue_to_template = {
+                'memory_bound': 'memory_bound.txt',
+                'host_device_transfers': 'memory_bound.txt',
+                'low_sm_efficiency': 'compute_bound.txt',
+                'compute_bound_or_unknown': 'compute_bound.txt',
+                'synchronization_overhead': 'sync_bound.txt',
+                'kernel_launch_overhead': 'sync_bound.txt',
+            }
+
+           
+            selected_template = None
+            for it in issues:
+                if it in issue_to_template:
+                    p = tmpl_dir / issue_to_template[it]
+                    if p.exists():
+                        selected_template = p
+                        break
+
+            if selected_template is None:
+               
+                parts = [
+                    "You are a CUDA performance engineer assistant. Analyze the profiling findings and propose concrete, minimal code edits or harness changes to improve performance. Always preserve numerical correctness and include a test-case adjustment if needed.",
+                    f"Hotspot kernel: {hotspot}",
+                    "Detected issues:",
+                ]
+                for it in issues:
+                    parts.append(f"- {it}")
+                if nvtx:
+                    parts.append("NVTX ranges detected:")
+                    for r in nvtx:
+                        parts.append(f"- {r}")
+                parts.append("For each suggested code edit: 1) show a minimal unified diff patch, 2) explain why it helps with the detected metric, 3) provide the validation command(s) and expected metric to check.")
+                return "\n".join(parts)
+
+         
+            try:
+                txt = selected_template.read_text(encoding='utf-8')
+                txt = txt.replace('{{hotspot}}', hotspot)
+              
+                if nvtx:
+                    txt += "\n\nNVTX ranges to focus on:\n"
+                    for r in nvtx:
+                        txt += f"- {r}\n"
+                return txt
+            except Exception:
+              
+                return f"Hotspot: {hotspot}\nIssues: {', '.join(issues)}"
