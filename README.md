@@ -265,7 +265,7 @@ cudallm optimize path/to/kernel.cu -o optimized.cu --iters 3 --profile-mode auto
 | `setup-gpu` | None | `--dry-run`, `--force-reinstall` | Verifies environment readiness for GPU kernel compiling. Bypasses llama-cpp-python installation. |
 | `serve` | None | `--host`, `--port`, `--public-url`, `--api-key`, `--api-key-file`, `--ssl-key-file`, `--ssl-cert-file`, `--allow-unsafe-network`, `--reuse-port` | Checks LM Studio connection status or displays startup instructions. |
 | `agent` | None | `--instruction`, `--llm-url`, `--llm-api-key`, `--llm-api-key-file`, `--insecure` | Runs the LangChain-based autonomous performance engineering agent. |
-| `dashboard` | None | `--port` | Start the CUDA LLM Optimizer Web Dashboard. |
+| `dashboard` | None | `--host`, `--port` | Start the CUDA LLM Optimizer Web Dashboard. |
 | `sandbox-run` | None | `--image`, `--cmd`, `--mount`, `--workdir`, `--mount-cwd/--no-mount-cwd`, `--timeout`, `--mem-limit-mb` | Run a command inside a Docker sandbox container. |
 | `optimize` | `<file_or_folder>` | `-o/--output`, `-i/--iters`, `--target`, `--retries`, `--fast-math`, `-O/--opt-level`, `--profile-mode`, `--nvtx`, `--apply-nvtx`, `--ncu-metrics`, `--dry-run`, `--llm-url`, `--insecure` | Runs the iterative optimization agent. Supports dry runs, folder batches, custom compilers flags, and NVTX injections. |
 | `expert` | `<exe_path>` | `--metrics`, `--run-deep`, `--code`, `--auto-nvtx`, `--rerun`, `--dry-run`, `--llm-url` | Performs advanced profiling on a compiled binary, identifies hotspots, runs deep NCU sweeps, and outputs LLM analyses. |
