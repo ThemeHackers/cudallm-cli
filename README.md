@@ -79,6 +79,55 @@ This section explains what the main sub-features actually do at runtime.
 
 ---
 
+## Architecture & Workflow
+
+`cudallm-cli` is structured as a Python-based utility that acts as an autonomous CUDA optimization agent. It orchestrates a closed feedback loop combining compiler tooling, correctness guards, hardware profilers, and LLMs.
+
+### Core Modules
+* **CLI/Entrypoint (`cli.py`)**: Unified command line interface handling subcommands, parameters, configuration, and environment detection.
+* **LLM Client (`llm_client.py`)**: Interfaces with local inference engines (like LM Studio). Features automatic dual-model routing to support running an agent orchestrator (e.g. `Qwen2.5`) and a low-level CUDA optimizer (e.g. `cudaLLM`) concurrently.
+* **Sandbox & Verification Harness (`sandbox.py`)**: Generates safe, isolated test harnesses. Computes baseline kernel executions and compares candidate outputs to guarantee mathematical correctness.
+* **Self-Healing Loop (`feedback_pipeline.py`)**: Detects compilation and execution errors. Condenses logs into diagnostics and prompts the LLM to patch syntax or logical bugs.
+* **Profiler Wrappers (`profiler_tools.py` & `profile_parsers.py`)**: Programmatically drives NVIDIA Nsight Compute (`ncu`) and Nsight Systems (`nsys`), parses reports, and extracts hardware performance counters.
+* **Autonomous Agent (`langchain_agent.py`)**: Implements a LangGraph-powered performance engineer that uses low-level GPU tool bindings to solve free-form requests.
+
+### Execution Workflow
+
+The diagram below outlines the step-by-step lifecycle of the iterative optimization and self-healing loop:
+
+```mermaid
+flowchart TD
+    Start([Start: Input CUDA File]) --> Init[Scan Environment & Baseline]
+    Init --> QueryLLM[Query LLM for Optimization Candidate]
+    QueryLLM --> Compile[Compile with NVCC]
+    
+    Compile -- Failure --> CompressErr[Compress Compiler Diagnostics]
+    CompressErr -->|Error Context| QueryLLM
+    
+    Compile -- Success --> Verify[Verify Mathematical Correctness]
+    
+    Verify -- Wrong Output --> CorrectionPrompt[Generate Correctness Repair Prompt]
+    CorrectionPrompt -->|Incorrect Output Context| QueryLLM
+    
+    Verify -- Correct Output --> Profile[Run Profiler: nsys / ncu / timer]
+    
+    Profile --> Analyze[Extract Latency & Performance Metrics]
+    Analyze --> CheckLimit{Iteration Limit Reached?}
+    
+    CheckLimit -- No --> Feedback[Compile Next Optimization Prompt]
+    Feedback -->|Speed/Hardware Stats| QueryLLM
+    
+    CheckLimit -- Yes --> Save[Save Optimal Candidate & Generate JSON Report]
+    Save --> End([End])
+    
+    style Start fill:#4CAF50,stroke:#388E3C,color:#fff
+    style End fill:#F44336,stroke:#D32F2F,color:#fff
+    style Compile stroke:#333,stroke-width:2px
+    style Verify stroke:#333,stroke-width:2px
+```
+
+---
+
 ## Prerequisites
 - **OS**: Windows (with PowerShell/Cmd) or Linux (Git Bash supported).
 - **GPU**: NVIDIA GPU with up-to-date drivers.
@@ -309,7 +358,7 @@ To explicitly define model names, configure them in `config/config.json`:
 
 ---
 
-## Connection Configuration & Probing
+## Networking & Secure Deployment
 
 The `cudallm serve` command is a helper command used to verify connectivity to your LM Studio server or configure client endpoints:
 

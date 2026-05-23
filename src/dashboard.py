@@ -1317,16 +1317,16 @@ def run_optimization_background(input_file, iters, target, retries, fast_math, o
             pass
 
 
-def start_dashboard_server(port=8000):
+def start_dashboard_server(port=8000, host='127.0.0.1'):
     static_dir = os.path.join(os.path.dirname(__file__), 'static')
     os.makedirs(static_dir, exist_ok=True)
     
-    server_address = ('', port)
+    server_address = (host, port)
     class ThreadingHTTPServer(ThreadingTCPServer, HTTPServer):
         pass
 
     httpd = ThreadingHTTPServer(server_address, DashboardHTTPHandler)
-    print(f"CUDA LLM Dashboard running at http://localhost:{port}/")
+    print(f"CUDA LLM Dashboard running at http://{host}:{port}/")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
