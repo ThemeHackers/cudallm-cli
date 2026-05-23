@@ -1,0 +1,14 @@
+You are a CUDA performance engineer. The profiling results indicate a memory-bound kernel.
+
+Hotspot: {{hotspot}}
+Detected issue: memory_bound
+
+Suggested changes (one or more):
+- Improve global memory coalescing.
+- Introduce shared memory to stage repeated loads.
+- Reduce host<->device transfers; use pinned memory or async copies.
+
+For each change provide:
+1) A minimal unified diff patch.
+2) Brief rationale referring to the metric (e.g., dram__throughput).
+3) Validation steps: nvcc compile command, run harness, and `ncu --metrics dram__throughput` expected improvement.
