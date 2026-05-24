@@ -404,6 +404,7 @@ class RooflineAnalyzer:
         Dynamically analyzes NCU CSV output to calculate Roofline metrics.
         Separates floating-point operations from integer/index operations.
         """
+        csv_path = os.path.normpath(csv_path)
         if not os.path.exists(csv_path):
             return None
         

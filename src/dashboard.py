@@ -741,7 +741,8 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             origin = self.headers.get('Origin')
             if origin and _is_allowed_dashboard_origin(origin):
-                self.send_header('Access-Control-Allow-Origin', origin)
+                sanitized_origin = origin.replace('\n', '').replace('\r', '')
+                self.send_header('Access-Control-Allow-Origin', sanitized_origin)
                 self.send_header('Vary', 'Origin')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Cudallm-Token')
@@ -756,7 +757,8 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         origin = self.headers.get('Origin')
         if origin and _is_allowed_dashboard_origin(origin):
-            self.send_header('Access-Control-Allow-Origin', origin)
+            sanitized_origin = origin.replace('\n', '').replace('\r', '')
+            self.send_header('Access-Control-Allow-Origin', sanitized_origin)
             self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Cudallm-Token')
@@ -951,6 +953,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             abs_path, _ = _resolve_dashboard_path(file_path)
+            abs_path = os.path.normpath(abs_path)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 403)
             return
@@ -975,6 +978,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             abs_path, rel_path = _resolve_dashboard_path(file_path)
+            abs_path = os.path.normpath(abs_path)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 403)
             return
@@ -997,6 +1001,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             abs_path, _ = _resolve_dashboard_path(file_path)
+            abs_path = os.path.normpath(abs_path)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 403)
             return
@@ -1074,6 +1079,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             abs_path, _ = _resolve_dashboard_path(file_path)
+            abs_path = os.path.normpath(abs_path)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 403)
             return
@@ -1135,6 +1141,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             abs_path, rel_path = _resolve_dashboard_path(file_path)
+            abs_path = os.path.normpath(abs_path)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 403)
             return
@@ -1154,6 +1161,7 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
             if ncu_csv_hint:
                 try:
                     hinted, _ = _resolve_dashboard_path(ncu_csv_hint, allowed_roots=None)
+                    hinted = os.path.normpath(hinted)
                 except ValueError:
                     hinted = None
                 if hinted and os.path.exists(hinted):
