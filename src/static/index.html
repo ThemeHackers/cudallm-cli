@@ -640,7 +640,7 @@
             flex: 1;
             display: grid;
             grid-template-columns: 320px 1fr;
-            overflow: visible;
+            overflow: hidden;
             min-height: 0;
         }
 
@@ -852,11 +852,12 @@
         .optimizer-monitor {
             display: flex;
             flex-direction: column;
-            overflow: visible;
+            overflow-y: auto;
+            overflow-x: hidden;
             padding: 1.5rem;
             gap: 1.25rem;
             min-height: 0;
-            flex: 1.12;
+            flex: 1;
         }
 
         /* Monitor Cards styling */
